@@ -113,3 +113,41 @@ test('a fully delegated realm still pauses every month for the player', () => {
   assert.ok(['month', 'battle', 'captives', 'gameover'].includes(r.type));
   assert.ok(officersIn(state, 'pingyuan').length >= 0);
 });
+
+test('heirs join a serving relative, or appear as free officers if the relative is gone', async () => {
+  const { applyDebuts } = await import('../src/engine/state.js');
+  const state = createGame({ seed: 2 });
+  assert.equal(state.officers['sun-quan'].status, 'unborn');
+  state.year = 197;
+  applyDebuts(state);
+  assert.equal(state.officers['sun-quan'].force, 'sun-jian');
+  assert.equal(state.officers['sun-quan'].province, 'changsha');
+
+  const other = createGame({ seed: 2 });
+  other.officers['sun-jian'].status = 'dead';
+  other.year = 197;
+  applyDebuts(other);
+  assert.equal(other.officers['sun-quan'].status, 'free');
+  assert.equal(other.officers['sun-quan'].province, 'changsha');
+});
+
+test('the RTK II schedule places searchable officers where the guide says', () => {
+  const state = createGame({ seed: 3 });
+  const zl = state.officers['zhuge-liang'];
+  assert.equal(zl.debut, 196);
+  assert.equal(zl.status, 'unborn');
+  assert.equal(state.officers['zhong-yao'].status, 'free');
+  assert.equal(state.officers['zhong-yao'].province, 'xuchang');
+  // Officers the 190 scenario already assigns to a lord keep their post.
+  assert.equal(state.officers['zhao-yun'].force, 'gongsun-zan');
+});
+
+test('captives eventually escape back to their lord', async () => {
+  const { endOfMonth } = await import('../src/engine/economy.js');
+  const state = createGame({ seed: 9 });
+  const o = state.officers['guan-yu'];
+  Object.assign(o, { status: 'captive', prevForce: 'liu-bei', force: 'cao-cao', province: 'chenliu' });
+  for (let i = 0; i < 240 && o.status === 'captive'; i++) endOfMonth(state);
+  assert.equal(o.status, 'serving');
+  assert.equal(o.force, 'liu-bei');
+});

@@ -38,6 +38,7 @@ export function eliminateForce(state, fid) {
       o.force = null;
       o.troops = 0;
       o.task = null;
+      o.wander = true;
     }
     if (o.prevForce === fid) o.prevForce = null;
   }

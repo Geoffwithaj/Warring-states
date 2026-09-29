@@ -30,9 +30,16 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   crossings removed by hand).
 - Scenario: **190 AD — The Coalition Against Dong Zhuo**, with 24 lords, ~230 officers, and many unclaimed
   provinces to grab.
-- Officers who haven't appeared yet come of age over time (Zhuge Liang in 197, Sima Yi in 201, Jiang Wei
-  in 220, …). Heirs such as Sun Quan and Cao Pi join their family's lord. Officers age and die, and a
-  lord who dies is succeeded by a relative or their most charismatic officer.
+- Free officers follow RTK II's own Scenario 1 schedule, taken from B.L. Timmins' *Free Generals
+  Compendium* (GameFAQs): about 200 officers become searchable in set provinces in set years (Zhuge
+  Liang in 196, Xu Shu in 192, Jiang Wei in 222, …). RTK II's 41 province numbers are mapped onto this
+  map's 51 provinces in `src/data/scenarios.js`.
+- Auto-joiners work as in RTK II: an heir or protégé joins their relative's lord if that relative is
+  serving when they appear (Sun Quan → Sun Jian in 197, Sima Yi → Cao Cao in 195); otherwise they
+  appear as a searchable free officer. Officers age and die, and a lord who dies is succeeded by a
+  relative or their most charismatic officer.
+- Searching depends mostly on charm, and computer lords search quickly when talent appears. Released
+  and deserting officers wander between provinces; officers who debut naturally stay put until found.
 - Hot-seat multiplayer: pick several lords on the title screen.
 
 **Turn structure (as in RTK II)**

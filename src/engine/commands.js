@@ -21,8 +21,9 @@ function here(state, pid, oid) {
   return o && o.status === 'serving' && o.province === pid ? o : null;
 }
 
+// As in RTK II, charm matters most when looking for talent.
 export function searchChance(o) {
-  return clamp(0.3 + (o.int + o.cha) / 400, 0, 0.9);
+  return clamp(0.15 + o.cha / 180 + o.int / 800, 0.05, 0.9);
 }
 
 export function freeRecruitChance(state, recruiter, target) {

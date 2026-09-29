@@ -2,7 +2,7 @@
 
 import { PROVINCES } from '../data/provinces.js';
 import { OFFICERS, FAMILIES, officerId } from '../data/officers.js';
-import { SCENARIOS } from '../data/scenarios.js';
+import { SCENARIOS, FREE_SCHEDULES, parseSchedule, RTK2_AUTO_JOIN, resolveAlias } from '../data/scenarios.js';
 import { clamp, randInt, rand } from './rng.js';
 
 export const MONTH_NAMES = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th', '11th', '12th'];
@@ -114,16 +114,47 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
       }
     }
   }
-  for (const [name, pid, debut] of sc.free) {
+  // Free officers and heirs: RTK II's schedule, then this scenario's extras.
+  const heirOf = {};
+  for (const [relative, heirs] of Object.entries(RTK2_AUTO_JOIN)) {
+    for (const h of heirs) heirOf[officerId(resolveAlias(h))] = officerId(relative);
+  }
+  for (const [relative, heir] of sc.extraHeirs || []) heirOf[officerId(heir)] = officerId(relative);
+  const schedule = [
+    ...(sc.freeSchedule ? parseSchedule(FREE_SCHEDULES[sc.freeSchedule]) : []),
+    ...(sc.extraFree || []).map(([name, province, year]) => ({ name, province, year })),
+  ];
+  for (const { name, province, year } of schedule) {
     const o = state.officers[officerId(name)];
-    o.province = pid;
-    o.debut = debut;
-    if (debut <= state.year) o.status = 'free';
+    if (o.status === 'serving' || o.debut) continue; // already placed by the scenario
+    o.province = province;
+    o.debut = year;
+    o.heirOf = heirOf[o.id] ?? null;
   }
   for (const a of Object.keys(state.forces)) {
     for (const b of Object.keys(state.forces)) if (a !== b) state.forces[a].relations[b] = 50;
   }
+  applyDebuts(state);
   return state;
+}
+
+// Officers whose year has come appear in January. An heir whose relative is
+// serving a lord joins that lord at once; everyone else becomes a free officer
+// waiting to be found by a search in their province.
+export function applyDebuts(state) {
+  for (const o of Object.values(state.officers)) {
+    if (o.status !== 'unborn' || !o.debut || o.debut > state.year) continue;
+    const kin = o.heirOf ? state.officers[o.heirOf] : null;
+    if (kin?.status === 'serving' && state.forces[kin.force]?.alive) {
+      enlist(state, o, kin.force, kin.province);
+      o.loyalty = 100;
+      o.troops = 0;
+      o.training = 30;
+      log(state, `${o.name} comes of age and joins ${kin.name} in the service of ${forceName(state, kin.force)} at ${state.provinces[kin.province].name}.`, 'info', [kin.force]);
+    } else {
+      o.status = 'free';
+    }
+  }
 }
 
 export function enlist(state, o, fid, pid) {
@@ -132,6 +163,7 @@ export function enlist(state, o, fid, pid) {
   o.province = pid;
   o.task = null;
   o.known = [];
+  o.wander = false;
   if (!o.unit) o.unit = 'inf';
 }
 

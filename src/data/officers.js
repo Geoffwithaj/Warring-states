@@ -2,7 +2,8 @@
 // the classic games (not copied from any one of them).
 // "died" is a natural-lifespan year used for aging; officers who historically
 // died violently young are given a plausible later year so they get to play.
-// Format: 'Name|int|war|cha|born|died'
+// Format: 'Name|int|war|cha|born|died'. A '#2' suffix separates two people who
+// share a name (e.g. Zhang Xiu the warlord and Zhang Xiu, son of Zhang Zhao).
 
 const ROSTER = `
 Cao Cao|91|72|96|155|220
@@ -242,15 +243,127 @@ Jin Xuan|40|50|30|155|210
 Gong Zhi|60|40|60|165|225
 Shamoke|20|85|30|175|222
 Han Xuan|30|60|20|150|215
+Gongsun Yuan|60|70|40|190|238
+Zhao Tong|50|70|55|190|240
+Zhao Guang|55|75|60|192|245
+Liu Feng|45|78|50|190|220
+Guan Suo|55|80|65|192|225
+Liu Chan|20|15|70|207|271
+Shen Rong|40|50|45|170|205
+Zhang Nan|45|70|40|165|222
+Jiang Yiqu|30|72|35|165|215
+Zhuge Dan|70|70|70|205|258
+Wang Kai|45|60|40|165|215
+Xiahou En|30|65|30|170|208
+Xiahou Ba|60|82|60|190|259
+Xiahou Wei|55|70|55|195|255
+Xiahou Mao|40|50|40|185|240
+Wang Zhong|40|62|40|165|220
+Xiahou Hui|70|40|60|200|240
+Mao Jie|80|30|70|160|216
+Xiahou Shang|60|50|55|185|225
+Xiahou De|40|65|40|185|220
+Xiahou He|65|40|55|200|250
+Sima Shi|90|72|80|208|255
+Sima Zhao|90|70|80|211|265
+Yang Xiu|90|20|50|175|219
+Hu Xin|30|60|30|170|210
+Wang Kuang|40|55|40|160|200
+Song Xian|25|70|25|165|205
+Chen Jiao|80|30|60|170|237
+Du Xi|70|30|60|170|225
+Dong Heng|25|60|25|170|219
+Wang Shuang|20|85|20|195|228
+Huang Wan|65|30|70|141|200
+Guo Huai|80|80|70|190|255
+Ma Wan|30|70|30|165|211
+Li Zhan|30|62|30|165|211
+Zhang Heng|30|68|30|165|211
+Dian Man|25|72|35|190|240
+Cao Rui|80|50|80|204|239
+Zhong Hui|95|70|60|225|264
+Fu Gan|70|30|50|175|215
+Chen Tai|75|72|65|200|260
+Guo Yi|60|30|50|190|230
+Lu Jian|30|60|30|165|210
+Zhu Ling|55|76|50|165|225
+Cao Shuang|40|50|40|205|249
+Zhang Miao|60|40|70|150|205
+Cheng Wu|70|30|40|200|250
+Chen Xi|30|55|30|165|210
+Lu Qian|60|65|60|165|230
+Cao Zhi|90|25|80|192|232
+Li Tong|45|76|60|168|209
+Jia Hua|30|65|30|170|225
+Tan Xiong|20|68|20|170|222
+Han Xian|30|60|25|160|205
+Fu Shiren|40|60|30|170|222
+Cai He|25|60|25|175|208
+Li Gui|50|40|40|165|208
+Cai Zhong|25|60|25|175|208
+Wang Can|85|20|70|177|217
+Huo Jun|65|70|65|178|217
+Liu Ba|85|20|60|180|222
+Sun Liang|60|30|55|243|260
+Sun Huan|60|72|65|195|234
+Yang Ling|20|68|20|170|208
+Sun Deng|75|30|80|209|241
+Sun He|70|30|70|224|253
+Sun Yi|50|70|55|184|210
+Huan Cheng|30|60|30|170|210
+Han Hao|60|60|50|165|225
+Sun Yu|65|60|65|177|215
+Quan Zong|70|72|70|180|247
+Lu Ba|30|50|30|200|250
+Xue Zong|75|20|60|175|243
+Cheng Bing|75|20|60|170|225
+Song Qian|40|70|40|175|220
+Zhou Fang|85|40|60|190|250
+Zhang Cheng|70|65|60|178|244
+Zhang Xiu#2|65|30|55|180|239
+Dong Xi|30|80|50|165|217
+Yan Jun|75|30|70|177|240
+Lu Ji|80|20|60|188|219
+Zhuge Ke|90|60|60|203|253
+Zhang Wen|80|20|70|193|230
+Xie Jing|60|60|50|185|240
+Cai Xun|40|60|40|170|220
+Li Yi|40|55|40|170|220
+Zhu Ran|70|80|65|182|249
+Lu Fan|70|60|60|160|228
+Ma Zhong#2|40|72|40|180|222
+Yuan Pu|30|55|30|170|220
+Fei Shi|70|20|50|175|240
+Liu Bao|30|60|30|195|240
+Zhang Zhu|30|65|30|195|240
+Yang Yi|80|30|30|190|235
+Zhang Ni|70|78|60|200|254
+Pang Yi|40|60|40|165|225
+Deng Zhi|85|50|70|180|251
+Yang Hong#2|80|20|60|170|228
+Deng Qian|30|60|30|175|225
+Dong Yun|85|20|70|190|246
+Guo Youzhi|70|20|60|190|245
+Liu Xun|40|50|50|190|240
+Fu Tong|45|75|50|195|222
+Yin Mo|60|20|40|195|245
+Xu Jing|75|15|75|150|222
+Chen Shi|30|70|30|190|235
+Zhang Yi|65|76|60|195|264
+Lu Yi|30|60|30|175|220
+Shang Guang|30|60|30|180|230
+Wang Kang|50|40|60|180|230
+Lu Kai|75|40|70|185|235
+Gao Ding|30|72|40|180|225
 `;
 
 export function officerId(name) {
-  return name.toLowerCase().replace(/[^a-z]+/g, '-');
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
 export const OFFICERS = ROSTER.trim().split('\n').map((line) => {
   const [name, int, war, cha, born, died] = line.split('|');
-  return { id: officerId(name), name, int: +int, war: +war, cha: +cha, born: +born, died: +died };
+  return { id: officerId(name), name: name.replace(/#\d+$/, ''), int: +int, war: +war, cha: +cha, born: +born, died: +died };
 });
 
 // Blood relatives and sworn brothers: used for succession and loyalty.

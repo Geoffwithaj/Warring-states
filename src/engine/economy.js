@@ -1,9 +1,10 @@
 // Province economy: income, harvest, development, and the month-end tick.
 
-import { clamp, chance, randInt, rand } from './rng.js';
+import { clamp, chance, randInt, rand, pick } from './rng.js';
+import { ADJACENT } from './map.js';
 import {
   officersIn, provincesOf, capitalOf, log, age, officerList, forceName, isFamily, governorOf,
-  troopCap, enlist, monthIndex,
+  troopCap, monthIndex, applyDebuts, enlist,
 } from './state.js';
 import { handleRulerLoss } from './succession.js';
 
@@ -150,22 +151,13 @@ function aging(state) {
   }
 }
 
-function debuts(state) {
+// Released and deserting officers drift between provinces; officers who
+// debuted naturally stay put until someone finds them.
+function wander(state) {
   for (const o of officerList(state)) {
-    if (o.status !== 'unborn' || !o.debut || o.debut > state.year) continue;
-    // Heirs whose family serves a living lord join that lord directly.
-    const kin = o.family !== null
-      ? officerList(state).find((k) => k.status === 'serving' && isFamily(k, o) && state.forces[k.force]?.alive)
-      : null;
-    if (kin) {
-      enlist(state, o, kin.force, kin.province);
-      o.loyalty = 100;
-      o.troops = 0;
-      o.training = 30;
-      log(state, `${o.name} comes of age and joins ${forceName(state, kin.force)} at ${state.provinces[kin.province].name}.`, 'info', [kin.force]);
-    } else {
-      o.status = 'free';
-    }
+    if (o.status !== 'free' || !o.wander || !chance(state, 0.2)) continue;
+    o.province = pick(state, ADJACENT[o.province]);
+    o.known = [];
   }
 }
 
@@ -186,6 +178,7 @@ function loyaltyDrift(state) {
       o.force = null;
       o.troops = 0;
       o.task = null;
+      o.wander = true;
       log(state, `${o.name}, disillusioned, abandons ${forceName(state, f.id)} and leaves ${state.provinces[pid].name}.`, 'warn', [f.id]);
     }
   }
@@ -260,6 +253,7 @@ export function endOfMonth(state) {
   state.lastReports = reports;
   loyaltyDrift(state);
   captiveEscapes(state);
+  wander(state);
   drift(state);
 
   // Alliances expire; relations slowly revert to neutral.
@@ -280,7 +274,7 @@ export function endOfMonth(state) {
     state.month = 1;
     state.year += 1;
     aging(state);
-    debuts(state);
+    applyDebuts(state);
     // Officers age: very old officers slowly lose martial prowess.
     for (const o of officerList(state)) if (o.status !== 'dead' && age(state, o) > 58 && o.war > 30) o.war -= 1;
   }

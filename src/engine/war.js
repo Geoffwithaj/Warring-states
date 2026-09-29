@@ -239,6 +239,7 @@ export function releaseCaptive(state, id) {
   } else {
     o.status = 'free';
     o.force = null;
+    o.wander = true;
     log(state, `${o.name} is released and wanders off.`, 'info', [captor]);
   }
   o.prevForce = null;

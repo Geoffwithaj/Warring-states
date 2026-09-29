@@ -149,8 +149,10 @@ function planPersonnel(state, pid, fid) {
   if (known.length) return { type: 'recruit', args: { officer: charmer.id, target: known[0].id } };
   const caps = captivesIn(state, pid).filter((o) => o.force === fid && captiveRecruitChance(state, charmer, o) > 0.1);
   if (caps.length && chance(state, 0.5)) return { type: 'recruit', args: { officer: charmer.id, target: caps[0].id } };
-  if (chance(state, 0.12)) {
-    const seeker = bestBy(here, (o) => o.int + o.cha);
+  // Like RTK II's computer lords, they are quick to find talent that turns up.
+  const hidden = freeOfficersIn(state, pid).some((o) => !o.known.includes(fid));
+  if (chance(state, hidden ? 0.5 : 0.04)) {
+    const seeker = bestBy(here, (o) => o.cha * 2 + o.int);
     return { type: 'search', args: { officer: seeker.id } };
   }
   return null;
