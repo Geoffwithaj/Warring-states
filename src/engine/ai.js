@@ -10,7 +10,9 @@ import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
 import { DEV_FIELDS, fieldMax, tilesOf, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
 import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
-import { traitOf, traitScale, opinionOf, inTruce, isHomeland } from './politics/index.js';
+import {
+  traitOf, traitScale, opinionOf, isHomeland, wouldAttack, isOffLimits, strikeRatio, usableStrength, realmDistance,
+} from './politics/index.js';
 
 export const DIRECTIVES = {
   balanced: { label: 'Balanced', desc: 'Develop steadily, keep a sound garrison, take only easy prey.', attackRatio: 1.7, claim: true },
@@ -20,19 +22,19 @@ export const DIRECTIVES = {
   expand: { label: 'Expand', desc: 'Build up and attack weaker neighbours when the odds are good.', attackRatio: 1.3, claim: true },
 };
 
-// Would this lord make war on that one? Allies and lords under truce are
-// safe unless the lord is faithless and has come to hate them.
-function wouldAttack(state, fid, other) {
-  if (areAllied(state, fid, other)) return traitOf(state, fid, 'honour') <= 1 && opinionOf(state, fid, other) < 30;
-  if (inTruce(state, fid, other)) return traitOf(state, fid, 'honour') <= 2 && opinionOf(state, fid, other) < 40;
-  return true;
-}
-
 function hostileNeighbors(state, pid, fid) {
   return ADJACENT[pid].filter((n) => {
     const owner = state.provinces[n].owner;
     return owner && owner !== fid && wouldAttack(state, fid, owner);
   });
+}
+
+// An army's striking power: walls defend a province but do not march out.
+const fieldStrength = (state, pid) => officersIn(state, pid).reduce((s, o) => s + strengthOf(o), 0);
+
+// The strongest blow a hostile neighbour could strike at this province.
+function threatTo(state, pid, fid, except = null) {
+  return Math.max(0, ...hostileNeighbors(state, pid, fid).filter((n) => n !== except).map((n) => fieldStrength(state, n)));
 }
 
 function bestBy(list, score) {
@@ -91,6 +93,7 @@ function planAttack(state, pid, fid, directive) {
   // Bold lords accept worse odds.
   const ratio = d.attackRatio * traitScale(state, fid, 'boldness', -0.06);
   for (const t of hostile) {
+    if (isOffLimits(state, fid, t)) continue;
     const defStr = provinceStrength(state, t);
     // Cavalry can neither breach walls nor storm a castle.
     const walled = state.provinces[t].walls > 30;
@@ -150,7 +153,7 @@ function planDraft(state, pid, fid, directive, frontier) {
   const here = idleOfficersIn(state, pid).filter((o) => o.war >= 45 || officersIn(state, pid).length <= 2);
   if (!here.length || p.gold < 120) return null;
   const mine = provinceStrength(state, pid);
-  const threat = Math.max(0, ...hostileNeighbors(state, pid, fid).map((n) => provinceStrength(state, n)));
+  const threat = threatTo(state, pid, fid);
   const troops = officersIn(state, pid).reduce((s, o) => s + o.troops, 0);
   const want = directive === 'military' || directive === 'defend' || directive === 'expand';
   const home = isHomeland(state, pid, fid) ? 1.2 : 1;
@@ -213,6 +216,78 @@ function planPersonnel(state, pid, fid) {
   return null;
 }
 
+// ---- Strategy ----------------------------------------------------------------
+
+const wallFactor = (state, pid) => 1 + state.provinces[pid].walls / 70;
+
+// Where the realm should send spare troops: a province in real danger first,
+// else the staging province of the lord's war goal.
+function musterPoint(state, fid) {
+  let worst = null;
+  for (const p of Object.values(state.provinces)) {
+    if (p.owner !== fid) continue;
+    const danger = threatTo(state, p.id, fid) / Math.max(1, provinceStrength(state, p.id));
+    if (danger > 1.5 && (!worst || danger > worst.danger)) worst = { pid: p.id, danger };
+  }
+  return worst?.pid ?? state.forces[fid].goal?.staging ?? null;
+}
+
+// Officers and supplies march, a province at a time, toward the muster point,
+// leaving enough behind to hold against the neighbours.
+function planMuster(state, pid, fid) {
+  const point = musterPoint(state, fid);
+  if (!point || point === pid) return null;
+  const dist = realmDistance(state, fid, point);
+  if (dist[pid] === undefined) return null;
+  const to = ADJACENT[pid].find((n) => dist[n] === dist[pid] - 1);
+  if (!to) return null;
+  const p = state.provinces[pid];
+  // Enough, with the walls, that no neighbour could strike at good odds.
+  const keep = threatTo(state, pid, fid) * 0.7;
+  const gov = governorOf(state, pid);
+  const ruler = state.forces[fid].ruler;
+  let left = officersIn(state, pid).reduce((s, o) => s + strengthOf(o), 0) * wallFactor(state, pid);
+  const movers = [];
+  for (const o of idleOfficersIn(state, pid).filter((x) => x.id !== gov?.id && x.id !== ruler && x.troops >= 1000).sort((a, b) => strengthOf(b) - strengthOf(a))) {
+    const s = strengthOf(o) * wallFactor(state, pid);
+    if (left - s < keep || movers.length >= 5) continue;
+    movers.push(o.id);
+    left -= s;
+  }
+  const gold = Math.max(0, p.gold - 300);
+  const food = Math.max(0, p.food - foodUpkeep(state, pid) * 6 - 1000);
+  if (!movers.length && gold < 200 && food < 500) return null;
+  return { type: 'move', args: { to, officers: movers, gold, food } };
+}
+
+// From the staging province, strike at the goal once the army is strong enough.
+function planStrike(state, pid, fid) {
+  const g = state.forces[fid].goal;
+  if (!g || g.staging !== pid || !ADJACENT[pid].includes(g.target)) return null;
+  // Everyone marches but the governor and enough to hold the other borders.
+  const keep = threatTo(state, pid, fid, g.target) * 0.7;
+  const gov = governorOf(state, pid);
+  const wf = wallFactor(state, pid);
+  let left = fieldStrength(state, pid) * wf;
+  const army = [];
+  for (const o of idleOfficersIn(state, pid).filter((x) => x.troops >= 500).sort((a, b) => strengthOf(b) - strengthOf(a))) {
+    if (army.length >= MAX_ARMY) break;
+    if (o.id === gov?.id && o.id !== state.forces[fid].ruler) continue;
+    if (left - strengthOf(o) * wf < keep) continue;
+    army.push(o);
+    left -= strengthOf(o) * wf;
+  }
+  if (!army.length) return null;
+  const need = provinceStrength(state, g.target) * strikeRatio(state, fid, g.target);
+  if (usableStrength(state, army, g.target) < need) return null;
+  const p = state.provinces[pid];
+  const troops = army.reduce((s, o) => s + o.troops, 0);
+  const food = Math.min(p.food, foodNeeded(troops));
+  if (food < foodNeeded(troops) * 0.6) return null;
+  const commander = bestBy(army, (o) => o.war + o.cha / 2 + (o.id === state.forces[fid].ruler ? 50 : 0));
+  return { type: 'war', args: { to: g.target, officers: army.map((o) => o.id), commander: commander.id, food } };
+}
+
 // Rear provinces feed officers, troops and gold toward the front.
 function planReinforce(state, pid, fid) {
   const p = state.provinces[pid];
@@ -262,7 +337,7 @@ export function aiDirective(state, pid, fid) {
   if (!hostile.length) return 'balanced';
   const aggression = (traitOf(state, fid, 'ambition') + traitOf(state, fid, 'boldness')) / 10;
   const mine = provinceStrength(state, pid);
-  const threat = Math.max(...hostile.map((n) => provinceStrength(state, n)));
+  const threat = threatTo(state, pid, fid);
   if (mine < threat * 0.8) return 'defend';
   return chance(state, 0.35 + aggression * 0.4) ? 'expand' : 'balanced';
 }
@@ -282,8 +357,12 @@ export function planProvinceTurn(state, pid, directive, { isAI, skip = new Set()
     const o = bestBy(here, (x) => x.cha);
     return { type: 'relief', args: { officer: o.id, food: Math.min(1000, p.food - 1000) } };
   }
+  const staging = isAI && state.forces[fid].goal?.staging === pid;
   const plans = [
-    () => planAttack(state, pid, fid, directive),
+    () => (isAI ? planStrike(state, pid, fid) : null),
+    // The army gathering for the goal is not spent on lesser prizes.
+    () => (staging ? null : planAttack(state, pid, fid, directive)),
+    () => (isAI ? planMuster(state, pid, fid) : null),
     () => planDraft(state, pid, fid, directive, frontier),
     () => (directive === 'develop' ? null : planTrain(state, pid, directive, frontier)),
     () => planPersonnel(state, pid, fid),

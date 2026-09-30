@@ -5,6 +5,7 @@
 import { initTraits } from './traits.js';
 import { initOpinion, opinionMonthly } from './opinion.js';
 import { initHomelands, homelandMonthly } from './homeland.js';
+import { updateGoals } from './strategy.js';
 
 export { TRAITS, traitOf, traitScale } from './traits.js';
 export {
@@ -12,7 +13,9 @@ export {
   neighboursOf, onAttack, inTruce, DEEDS,
 } from './opinion.js';
 export { isHomeland, lostHomeland, grievance, onConquest, onFall } from './homeland.js';
-export { covetedProvince } from './strategy.js';
+export {
+  covetedProvince, wouldAttack, isOffLimits, strikeRatio, usableStrength, realmDistance, onGoalBattle, chooseGoal,
+} from './strategy.js';
 export { spyChance, gatherIntelligence, factsFor, plainChance, SPY_COST } from './intel.js';
 
 export function initPolitics(state, scenario) {
@@ -20,9 +23,11 @@ export function initPolitics(state, scenario) {
   initOpinion(state, scenario.bonds);
   initHomelands(state);
   state.intel = {};
+  updateGoals(state);
 }
 
 export function politicsMonthly(state) {
   opinionMonthly(state);
   homelandMonthly(state);
+  updateGoals(state);
 }

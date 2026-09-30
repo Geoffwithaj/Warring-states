@@ -491,8 +491,9 @@ export function openPlots(ctx) {
   const p = state.provinces[pid];
   const fid = p.owner;
   const others = Object.values(state.forces).filter((f) => f.alive && f.id !== fid);
-  const officers = idleOfficersIn(state, pid).sort((a, b) => b.int - a.int);
-  if (!officers.length) return ctx.toast(NO_ONE);
+  // A lord does not go spying in person.
+  const officers = idleOfficersIn(state, pid).filter((o) => o.id !== state.forces[fid].ruler).sort((a, b) => b.int - a.int);
+  if (!officers.length) return ctx.toast(idleOfficersIn(state, pid).length ? 'Only you are free here, and a lord does not go spying in person.' : NO_ONE);
   const form = { target: others[0].id, agent: officers[0].id };
   const body = h('div');
   const render = () => {

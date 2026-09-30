@@ -243,6 +243,7 @@ export const COMMANDS = {
     const o = here(state, pid, officer);
     const f = state.forces[target];
     if (!o || !f?.alive || target === o.force) return fail('Invalid mission.');
+    if (state.forces[o.force].ruler === o.id) return fail('A lord cannot go spying in person.');
     if (p.gold < SPY_COST) return fail(`The mission needs ${SPY_COST} gold.`);
     p.gold -= SPY_COST;
     const r = gatherIntelligence(state, o, target);

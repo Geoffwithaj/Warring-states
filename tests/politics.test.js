@@ -151,7 +151,8 @@ test('an agent brings back a report, costs gold and uses the officer\'s month; a
   newGameStart(state);
   advance(state);
   const p = state.provinces.chenliu;
-  const agent = officersIn(state, 'chenliu').sort((a, b) => b.int - a.int)[0];
+  assert.equal(playerCommand(state, 'spy', { officer: 'cao-cao', target: 'dong-zhuo' }).ok, false, 'the lord does not spy in person');
+  const agent = officersIn(state, 'chenliu').filter((o) => o.id !== 'cao-cao').sort((a, b) => b.int - a.int)[0];
   agent.int = 100;
   const gold = p.gold;
   let res;

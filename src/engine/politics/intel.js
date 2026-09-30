@@ -141,6 +141,16 @@ export function gatherFacts(state, fid, viewer) {
   if (wavering) {
     facts.push({ key: `loyal:${wavering.id}`, cat: 'court', plain: `${wavering.name}'s loyalty to ${n} wavers.`, vague: `Not all of ${n}'s officers are content.`, weight: 1 });
   }
+  const goal = state.forces[fid].goal;
+  if (goal) {
+    const st = state.provinces[goal.staging].name;
+    const tg = state.provinces[goal.target];
+    facts.push({
+      key: `goal:${goal.target}`, cat: 'army', weight: 2.5,
+      plain: `${n} is gathering troops at ${st} to strike at ${tg.name}${tg.owner === viewer ? ' — your province' : ''}.`,
+      vague: `${n} is gathering troops near ${st}.`,
+    });
+  }
   const provs = provincesOf(state, fid);
   if (provs.length > 1) {
     const main = provs.reduce((a, b) => (troopsIn(state, a.id) >= troopsIn(state, b.id) ? a : b));

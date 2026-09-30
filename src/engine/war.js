@@ -9,7 +9,7 @@ import { ADJACENT, isAdjacent } from './map.js';
 import { createBattle, autoResolve } from './battle.js';
 import { tilesOf, TILE_VALUE } from './economy.js';
 import { handleRulerLoss, eliminateForce } from './succession.js';
-import { onAttack, onConquest, remember, isHomeland, traitOf } from './politics/index.js';
+import { onAttack, onConquest, remember, isHomeland, traitOf, onGoalBattle } from './politics/index.js';
 
 export const MAX_ARMY = 10;
 
@@ -206,6 +206,7 @@ export function finishBattle(state, b) {
     log(state, `${forceName(state, fa)}'s troops carry ${loot} gold of plunder home from ${dst.name}.`, 'war', [fa, fd]);
   }
   if (b.recovered) dst.gold += b.recovered;
+  if (b.intent !== 'raid') onGoalBattle(state, fa, b.pid, winner === 'att');
   const survivors = (side) => b.units.filter((u) => u.side === side && !u.slain && !u.captured).map((u) => state.officers[u.officer]);
   const summary = `${forceName(state, winner === 'att' ? fa : fd)} is victorious at ${dst.name}. ${reason}`;
   log(state, summary, 'war', [fa, fd]);

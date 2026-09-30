@@ -144,6 +144,14 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   much they bring back and how plainly: *"Dong Zhuo would betray an ally without a second thought."
   "Yuan Shao distrusts Yuan Shu, though they are allies." "Sun Jian desires Jiangxia above all
   else."* A failed agent may be caught and imprisoned. Reports go in the Intelligence journal.
+- **War goals**: a computer lord picks one neighbouring province to take — a lost homeland first,
+  then rich land held by lords it dislikes — and holds to it for up to two and a half years. Spare
+  officers, troops, gold and food march province by province to a staging province on that border
+  while enough stays home to deter the other neighbours; guileful lords raid the target meanwhile.
+  It strikes once the gathered army is strong enough for the lord's boldness. Two failures, or a
+  goal that stalls, and it looks elsewhere. A province facing a real threat draws reinforcements
+  first. If you are the target, your scouts report the army massing across the border, and an
+  agent can learn the goal outright.
 - The 190 scenario starts with the coalition bound against Dong Zhuo, and old rivalries (the Yuan
   brothers; Gongsun Zan and Liu Yu).
 - The political engine lives in `src/engine/politics/` and the rest of the game only uses its exported
@@ -178,8 +186,6 @@ tests/           node:test suites
 
 - More scenarios (194 Cao Cao in Yan province, 200 Guandu, 208 Red Cliffs, 220 Three Kingdoms)
 - Fog of war on enemy province details
-- A strategic layer: lords choose war goals, mass forces at the front and soften targets before
-  invading
 - Joint invasions as in RTK II: invite adjacent allies to join, paying them in gold. The lord leading
   the invasion always takes the province; helpers keep only what they plunder. Defensive aid, and
   coalitions that split when their members fall out

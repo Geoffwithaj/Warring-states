@@ -1080,8 +1080,7 @@ function bestAttack(state, b, u) {
     const { dmg, counter } = previewMelee(state, b, u, t);
     // Once the walls are breached, storming the garrison is worth real losses.
     // The commander storms only if there is no other foot soldier to do it.
-    const footSoldiers = activeUnits(b, 'att').filter((x) => x !== u && x.type !== 'cav');
-    const storming = u.side === 'att' && isCastle(b, t.c, t.r) && isBreached(b) && (!u.commander || !footSoldiers.length);
+    const storming = u.side === 'att' && isCastle(b, t.c, t.r) && isBreached(b) && (!u.commander || !hasSiegeCrew(b, u));
     const s = storming ? (dmg >= counter * 0.5 ? dmg : -1) : scoreTarget(state, b, u, t, dmg) - counter * tradeWeight(b, u);
     if (!best || s > best.s) best = { kind: 'melee', t, s };
   }
@@ -1194,8 +1193,7 @@ function positionScore(state, b, u, node, goal, field) {
   if (site && !site.razed) s -= u.side === 'att' && !u.commander ? 6 : 3;
   // The attacking commander stays out of the garrison's reach until the castle
   // is open, unless nobody else can storm it.
-  const others = activeUnits(b, 'att').some((x) => x !== u && x.type !== 'cav');
-  if (u.side === 'att' && u.commander && others && !(isBreached(b) && !castleOccupant(b))) {
+  if (u.side === 'att' && u.commander && hasSiegeCrew(b, u) && !(isBreached(b) && !castleOccupant(b))) {
     const d = hexDist(node, b.castle);
     if (d <= GARRISON_RANGE) s += 60;
   }
@@ -1221,6 +1219,12 @@ export function aiStep(state, b) {
     return true;
   }
   if (u.side === 'att' && b.intent === 'raid') return raidStep(state, b, u);
+  // A commander who cannot take the castle leads the army home in good order.
+  const giveUp = hopelessSiege(b, u);
+  if (giveUp && canRetreat(b, u, state, b.retreatOptions)) {
+    doRetreat(state, b, u);
+    return true;
+  }
   if (tryDuel(state, b, u)) return true;
   const fires = fireTargets(b, u).filter((n) => unitAt(b, n.c, n.r));
   if (fires.length && o.int >= 75 && chance(state, 0.4)) {
@@ -1237,14 +1241,14 @@ export function aiStep(state, b) {
   }
   // Otherwise keep battering the walls: every point lost weakens the defence.
   // The commander directs the siege rather than joining the assault.
-  if (canAssault(b, u) && (!u.commander || !activeUnits(b, 'att').some((x) => x !== u && x.type !== 'cav'))) {
+  if (canAssault(b, u) && (!u.commander || !hasSiegeCrew(b, u))) {
     doAssault(state, b, u);
     return true;
   }
 
   // Move: toward the goal, preferring hexes from which we can strike.
   // A mauled attacker falls back toward its own edge to get away in good order.
-  const goal = mauled && u.side === 'att' ? homeHexes(b) : goalFor(state, b, u);
+  const goal = (mauled && u.side === 'att') || giveUp ? homeHexes(b) : goalFor(state, b, u);
   const holdCastle = u.side === 'def' && u.commander;
   if (!holdCastle && !u.moved) {
     const reach = reachable(b, u);
@@ -1266,7 +1270,7 @@ export function aiStep(state, b) {
         perform(state, b, u, atk);
         return true;
       }
-      if (canAssault(b, u) && (!u.commander || !activeUnits(b, 'att').some((x) => x !== u && x.type !== 'cav'))) {
+      if (canAssault(b, u) && (!u.commander || !hasSiegeCrew(b, u))) {
         doAssault(state, b, u);
         return true;
       }
@@ -1274,6 +1278,15 @@ export function aiStep(state, b) {
   }
   doWait(b, u);
   return true;
+}
+
+// Infantry other than this unit that can batter and storm the castle.
+const hasSiegeCrew = (b, u) => activeUnits(b, 'att').some((x) => x !== u && x.type === 'inf');
+
+// Only the garrison is left behind walls nobody on our side can breach.
+function hopelessSiege(b, u) {
+  if (u.side !== 'att' || !u.commander || u.type === 'inf' || hasSiegeCrew(b, u) || isBreached(b)) return false;
+  return activeUnits(b, 'def').every((e) => isCastle(b, e.c, e.r));
 }
 
 // Hexes from which the attackers can withdraw: their arrival strip.
