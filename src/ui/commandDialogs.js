@@ -3,7 +3,7 @@
 import { h, fmt, select, slider } from './dom.js';
 import { openModal } from './modal.js';
 import {
-  officersIn, freeOfficersIn, captivesIn, forceName, troopsIn, strengthOf, provinceStrength, areAllied,
+  officersIn, idleOfficersIn, freeOfficersIn, captivesIn, forceName, troopsIn, strengthOf, provinceStrength, areAllied,
   troopCap,
 } from '../engine/state.js';
 import { ADJACENT } from '../engine/map.js';
@@ -17,7 +17,8 @@ import { foodNeeded, MAX_ARMY, releaseCaptive, executeCaptive } from '../engine/
 
 const pct = (p) => `${Math.round(p * 100)}%`;
 const officerOpts = (list, stat) => list.map((o) => [o.id, `${o.name}${stat ? ` (${stat.toUpperCase()} ${o[stat]})` : ''}`]);
-const bestBy = (list, f) => list.reduce((a, b) => (f(b) > f(a) ? b : a));
+const bestBy = (list, f) => (list.length ? list.reduce((a, b) => (f(b) > f(a) ? b : a)) : null);
+const NO_ONE = 'Every officer here already has orders this month.';
 
 function tabbed(tabs, initial) {
   const bar = h('div', { class: 'tabs' });
@@ -37,7 +38,8 @@ function tabbed(tabs, initial) {
 export function openDevelop(ctx) {
   const { state, pid } = ctx;
   const p = state.provinces[pid];
-  const officers = officersIn(state, pid);
+  const officers = idleOfficersIn(state, pid);
+  if (!officers.length) return ctx.toast(NO_ONE);
   const form = { field: 'farm', officer: bestBy(officers, (o) => o.int).id, gold: Math.min(100, p.gold), food: Math.min(500, p.food) };
   const body = h('div');
   const render = () => {
@@ -89,14 +91,17 @@ export function openDevelop(ctx) {
 export function openMilitary(ctx, initial) {
   const { state, pid } = ctx;
   const p = state.provinces[pid];
-  const officers = () => officersIn(state, pid);
-  const draft = { officer: bestBy(officers(), (o) => (troopCap(o) - o.troops) * o.war).id, troops: 0 };
-  const train = { officer: bestBy(officers(), (o) => o.war).id };
+  const officers = () => idleOfficersIn(state, pid);
+  const draft = { officer: bestBy(officers(), (o) => (troopCap(o) - o.troops) * o.war)?.id, troops: 0 };
+  const train = { officer: bestBy(officers(), (o) => o.war)?.id };
+  const none = () => h('p', { class: 'muted' }, `${NO_ONE} Organizing troops is still possible.`);
+  if (!officers().length) initial = 'organize';
   let modal;
   const tabs = tabbed([
     {
       key: 'draft', label: 'Draft',
       render: () => {
+        if (!officers().length) return none();
         const o = state.officers[draft.officer];
         const max = maxDraft(state, pid, o);
         draft.troops = Math.min(draft.troops || Math.min(max, 1000), max);
@@ -113,11 +118,12 @@ export function openMilitary(ctx, initial) {
           preview,
           h('div', { class: 'full hint' }, `Draft costs 1 gold per 10 men and draws from the population (${fmt(p.pop)}).`));
       },
-      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Draft', primary: true, onClick: () => ctx.issue('draft', { officer: draft.officer, troops: draft.troops }) }]),
+      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Draft', primary: true, disabled: !officers().length, onClick: () => ctx.issue('draft', { officer: draft.officer, troops: draft.troops }) }]),
     },
     {
       key: 'train', label: 'Train',
       render: () => {
+        if (!officers().length) return none();
         const master = state.officers[train.officer];
         const units = officers().filter((o) => o.troops > 0);
         return h('div', {},
@@ -127,7 +133,7 @@ export function openMilitary(ctx, initial) {
             units.length ? units.map((o) => h('div', {}, `${o.name}: training ${o.training} → ${Math.min(100, o.training + trainGain(o, master))}`))
               : 'No troops to train.'));
       },
-      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Train', primary: true, onClick: () => ctx.issue('train', { officer: train.officer }) }]),
+      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Train', primary: true, disabled: !officers().length, onClick: () => ctx.issue('train', { officer: train.officer }) }]),
     },
     {
       key: 'organize', label: 'Organize (free)',
@@ -177,8 +183,10 @@ export function openPersonnel(ctx, initial) {
   const p = state.provinces[pid];
   const fid = p.owner;
   const officers = officersIn(state, pid);
-  const search = { officer: bestBy(officers, (o) => o.int + o.cha).id };
-  const recruit = { officer: bestBy(officers, (o) => o.cha).id, target: null };
+  const workers = idleOfficersIn(state, pid);
+  const search = { officer: bestBy(workers, (o) => o.int + o.cha)?.id };
+  const recruit = { officer: bestBy(workers, (o) => o.cha)?.id, target: null };
+  if (!workers.length && !initial) initial = 'reward';
   const reward = { target: officers.reduce((a, b) => (b.loyalty < a.loyalty ? b : a)).id, gold: Math.min(100, p.gold) };
   let modal;
   const targets = () => [
@@ -188,20 +196,21 @@ export function openPersonnel(ctx, initial) {
   const tabs = tabbed([
     {
       key: 'search', label: 'Search',
-      render: () => h('div', { class: 'form' },
+      render: () => (!workers.length ? h('p', { class: 'muted' }, NO_ONE) : h('div', { class: 'form' },
         h('span', {}, 'Searcher'),
-        select(officerOpts([...officers].sort((a, b) => b.int + b.cha - a.int - a.cha)).map(([id]) => {
+        select(officerOpts([...workers].sort((a, b) => b.int + b.cha - a.int - a.cha)).map(([id]) => {
           const o = state.officers[id];
           return [id, `${o.name} (INT ${o.int} CHA ${o.cha}) — ${pct(searchChance(o))} per talent`];
         }), search.officer, (v) => (search.officer = v)),
-        h('div', { class: 'full hint' }, 'Scour the province for officers not yet in anyone’s service. A found officer may join at once, or may decline — you can try again later with Recruit.')),
-      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Search', primary: true, onClick: () => ctx.issue('search', { officer: search.officer }) }]),
+        h('div', { class: 'full hint' }, 'Scour the province for officers not yet in anyone’s service. A found officer may join at once, or may decline — you can try again later with Recruit.'))),
+      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Search', primary: true, disabled: !workers.length, onClick: () => ctx.issue('search', { officer: search.officer }) }]),
     },
     {
       key: 'recruit', label: 'Recruit',
       render: () => {
         const list = targets();
         if (!list.length) return h('p', { class: 'muted' }, 'There is no one here to recruit. Search the province, or capture enemy officers in battle.');
+        if (!workers.length) return h('p', { class: 'muted' }, NO_ONE);
         if (!recruit.target || !list.find((o) => o.id === recruit.target)) recruit.target = list[0].id;
         const t = state.officers[recruit.target];
         const r = state.officers[recruit.officer];
@@ -210,10 +219,10 @@ export function openPersonnel(ctx, initial) {
           h('span', {}, 'Target'),
           select(list.map((o) => [o.id, `${o.name}${o.status === 'captive' ? ' (captive)' : ''} — INT ${o.int} WAR ${o.war} CHA ${o.cha}`]), recruit.target, (v) => { recruit.target = v; tabs.show(); }),
           h('span', {}, 'Envoy'),
-          select(officerOpts([...officers].sort((a, b) => b.cha - a.cha), 'cha'), recruit.officer, (v) => { recruit.officer = v; tabs.show(); }),
+          select(officerOpts([...workers].sort((a, b) => b.cha - a.cha), 'cha'), recruit.officer, (v) => { recruit.officer = v; tabs.show(); }),
           h('div', { class: 'full preview' }, p2 > 0 ? `Chance of success: ${pct(p2)}` : `${t.name} will never betray their lord.`));
       },
-      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Recruit', primary: true, disabled: !targets().length, onClick: () => ctx.issue('recruit', { officer: recruit.officer, target: recruit.target }) }]),
+      onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Recruit', primary: true, disabled: !targets().length || !workers.length, onClick: () => ctx.issue('recruit', { officer: recruit.officer, target: recruit.target }) }]),
     },
     {
       key: 'reward', label: 'Reward',
@@ -297,7 +306,7 @@ export function openMove(ctx, initial) {
     h('span', {}, 'Destination'),
     select(dests.map((d) => [d, `${state.provinces[d].name} (${fmt(troopsIn(state, d))} troops)`]), form.to, (v) => { form.to = v; upd(); ctx.highlight([v]); }),
     h('span', {}, 'Officers'),
-    officerChecklist(state, officersIn(state, pid), form.chosen, upd),
+    officerChecklist(state, idleOfficersIn(state, pid), form.chosen, upd),
     h('span', {}, 'Gold'), slider(0, { min: 0, max: p.gold, step: 10, onInput: (v) => { form.gold = v; upd(); } }),
     h('span', {}, 'Food'), slider(0, { min: 0, max: p.food, step: 100, onInput: (v) => { form.food = v; upd(); } }),
     h('div', { class: 'full' }, summary));
@@ -324,7 +333,8 @@ export function openWar(ctx, initial) {
   const p = state.provinces[pid];
   const targets = warTargets(state, pid);
   if (!targets.length) return ctx.toast('There is no one to attack from here.');
-  const officers = officersIn(state, pid).sort((a, b) => strengthOf(b) - strengthOf(a));
+  const officers = idleOfficersIn(state, pid).sort((a, b) => strengthOf(b) - strengthOf(a));
+  if (!officers.length) return ctx.toast(NO_ONE);
   const form = { to: targets.includes(initial) ? initial : targets[0], chosen: new Set(officers.filter((o) => o.troops > 0).slice(0, 3).map((o) => o.id)), commander: null, food: 0 };
   const intel = h('div', { class: 'preview' });
   const cmdHolder = h('div');
@@ -416,7 +426,8 @@ export function openDiplomacy(ctx) {
   const p = state.provinces[pid];
   const fid = p.owner;
   const others = Object.values(state.forces).filter((f) => f.alive && f.id !== fid);
-  const officers = officersIn(state, pid);
+  const officers = idleOfficersIn(state, pid);
+  if (!officers.length) return ctx.toast(NO_ONE);
   const form = { target: others[0].id, envoy: bestBy(officers, (o) => o.cha + o.int).id, mode: 'gift', gold: Math.min(200, p.gold) };
   const body = h('div');
   const render = () => {
@@ -455,6 +466,7 @@ export function openDiplomacy(ctx) {
 
 export function openCommandDialog(ctx, type) {
   // Like RTK II, choosing where to march or attack happens on the map.
+  if (type === 'war' && !idleOfficersIn(ctx.state, ctx.pid).length) return ctx.toast(NO_ONE);
   if (type === 'war' || type === 'move') {
     const ids = type === 'war' ? warTargets(ctx.state, ctx.pid) : moveTargets(ctx.state, ctx.pid);
     if (!ids.length) {

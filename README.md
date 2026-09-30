@@ -1,7 +1,7 @@
 # Warring States
 
 An homage to *Romance of the Three Kingdoms II* (SNES) that runs in the browser. It keeps the classic
-structure — a provincial map of Han China, historical officers, one command per province per month,
+structure — a provincial map of Han China, historical officers, provinces taking turns in a random order each month,
 turn-based tactical battles — and adds more depth in three places: province development, delegation
 to governors, and combat.
 
@@ -52,9 +52,10 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   full-screen. On wide screens the map and orders are shown side by side.
 
 **Turn structure (as in RTK II)**
-- Each month every province of every lord takes one turn, in a random order. When one of yours comes up
-  it pulses on the map. Commands: Develop, Military, Personnel, Move, War, Trade, Diplomacy, Rest — or
-  let the governor choose for this month.
+- Each month every province of every lord takes one turn, in a random order. In its turn a province
+  can give any number of orders (Develop, Military, Personnel, Move, War, Trade, Diplomacy), but each
+  officer can take only one job a month; officerless orders like trading are unlimited. War ends the
+  turn; otherwise press End turn, or let the governor finish it. Computer lords play by the same rule.
 
 **Economy (expanded)**
 - Province stats: gold, food, population, farmland, commerce, flood control, walls, public order.
@@ -74,7 +75,7 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   log. They also set their officers' assignments.
 - **Standing assignments**: each officer can be given an ongoing job (tend farmland, oversee markets,
   maintain dikes, repair walls, keep order, drill troops). Assignments run every month for a small
-  stipend, on top of the province's one command.
+  stipend, on top of the orders given in the province's turn.
 - **Remit to capital**: an outlying province can send 25–75% of its income to the capital.
 - Choose the governor, and see an income, harvest and upkeep forecast for each province.
 

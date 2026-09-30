@@ -2,7 +2,7 @@
 
 import { h, fmt, bar, select } from './dom.js';
 import {
-  officersIn, captivesIn, freeOfficersIn, forceName, governorOf, troopsIn, capitalOf, age, areAllied,
+  officersIn, idleOfficersIn, isIdle, captivesIn, freeOfficersIn, forceName, governorOf, troopsIn, capitalOf, age, areAllied,
 } from '../engine/state.js';
 import { TAX, TASKS, TASK_COST, monthlyGold, harvestFood, foodUpkeep, HARVEST_MONTH, popCap } from '../engine/economy.js';
 import { DIRECTIVES } from '../engine/ai.js';
@@ -45,20 +45,24 @@ export function renderProvincePanel(el, ctx) {
     p.owner && !mine && areAllied(state, p.owner, ctx.viewer) ? ' · Allied' : ''));
 
   if (awaiting) {
+    const all = officersIn(state, pid);
+    const free = idleOfficersIn(state, pid);
     el.append(h('div', { class: 'awaiting-banner' },
-      h('b', {}, `Orders for ${p.name}`), h('div', { class: 'hint', style: { color: '#e8dcb8' } },
-        'Each province issues one command per month. Management settings below are free.')));
+      h('b', {}, `Orders for ${p.name}`),
+      h('div', { style: { color: '#e8dcb8' } }, `${free.length} of ${all.length} officers still free this month.`),
+      h('div', { class: 'hint', style: { color: '#e8dcb8' } },
+        'Give as many orders as you like — each officer can take one job a month. War ends the province\u2019s turn. Management settings are free.')));
     const cmd = (label, type, title) => h('button', { onclick: () => ctx.openCommand(type), title }, label);
     el.append(h('div', { class: 'commands' },
       cmd('Develop', 'develop', 'Invest gold in farmland, commerce, dikes or walls; give relief'),
       cmd('Military', 'military', 'Draft, train, organise troops'),
       cmd('Personnel', 'personnel', 'Search for talent, recruit, reward, captives'),
       cmd('Move', 'move', 'Move officers, troops and supplies'),
-      cmd('War', 'war', 'Attack an adjacent province'),
+      cmd('War', 'war', 'Attack an adjacent province (ends the turn)'),
       cmd('Trade', 'trade', 'Buy or sell food'),
       cmd('Diplomacy', 'diplomacy', 'Gifts and alliances'),
-      h('button', { onclick: ctx.governorDecides, title: 'Let the governor choose this month’s command' }, 'Governor decides'),
-      h('button', { onclick: () => ctx.issue('rest', {}) }, 'Rest'),
+      h('button', { onclick: ctx.governorDecides, title: 'Let the governor give orders to the free officers and end the turn' }, 'Governor finishes'),
+      h('button', { class: 'primary', onclick: () => ctx.issue('rest', {}) }, 'End turn ▶'),
     ));
   }
 
@@ -142,7 +146,8 @@ function officerTable(ctx, officers, mine) {
         ? select([['', '—'], ...Object.entries(TASKS)], o.task || '', (v) => { setTask(state, o.id, v || null); ctx.refresh(); })
         : h('span', { class: 'muted' }, o.task ? TASKS[o.task] : '—');
       return h('tr', { class: 'clickable', onclick: (e) => { if (e.target.tagName !== 'SELECT') ctx.showOfficer(o.id); } },
-        h('td', {}, o.name, o.id === f?.ruler ? h('span', { class: 'tag gold' }, 'Lord') : null),
+        h('td', {}, o.name, o.id === f?.ruler ? h('span', { class: 'tag gold' }, 'Lord') : null,
+          mine && !isIdle(state, o) ? h('span', { class: 'tag', title: 'Already has orders this month' }, 'Busy') : null),
         h('td', { class: 'n' }, o.int), h('td', { class: 'n' }, o.war), h('td', { class: 'n' }, o.cha),
         h('td', { class: 'n' }, fmt(o.troops)),
         h('td', { class: 'n' }, o.training),

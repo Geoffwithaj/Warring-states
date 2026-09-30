@@ -75,7 +75,7 @@ export function maxDraft(state, pid, o) {
 }
 
 // Standing assignments: officers work on a province every month for a small
-// stipend, independent of the province's one command per month.
+// stipend, independent of the orders given in the province's turn.
 function applyTasks(state, p) {
   for (const o of officersIn(state, p.id)) {
     if (!o.task) continue;

@@ -1,10 +1,10 @@
-// Province commands. Each province may issue one command per month (as in the
-// classic game); "free" actions such as tax policy, standing assignments and
+// Province commands. As in the classic game, a province may issue any number
+// of commands in its turn, but each officer takes one job a month; "free" actions such as tax policy, standing assignments and
 // delegation can be changed at any time.
 
 import { chance, clamp, randInt } from './rng.js';
 import {
-  officersIn, freeOfficersIn, log, forceName, rulerOf, enlist, troopCap, monthIndex,
+  officersIn, freeOfficersIn, log, forceName, rulerOf, enlist, troopCap, monthIndex, isIdle,
   provincesOf,
 } from './state.js';
 import { isAdjacent, PROVINCE_BY_ID } from './map.js';
@@ -227,7 +227,7 @@ export const COMMANDS = {
   },
 
   rest() {
-    return ok('The province rests this month.');
+    return ok('Orders for the month are complete.');
   },
 };
 
@@ -240,11 +240,25 @@ export function allianceChance(state, envoy, target) {
   return clamp(((rel - 45) / 45) * skill(envoy, 'cha') * 0.7 - wariness, 0, 0.9);
 }
 
+// The officers a command puts to work. As in RTK II, a province may issue any
+// number of commands in its turn, but each officer takes one job per month.
+const PERFORMERS = {
+  develop: (a) => [a.officer], relief: (a) => [a.officer], draft: (a) => [a.officer],
+  train: (a) => [a.officer], search: (a) => [a.officer], recruit: (a) => [a.officer],
+  gift: (a) => [a.officer], alliance: (a) => [a.officer], move: (a) => a.officers, war: (a) => a.officers,
+};
+
+export const performersOf = (type, args) => (PERFORMERS[type]?.(args) ?? []).filter(Boolean);
+
 export function executeCommand(state, pid, type, args, opts) {
   const cmd = COMMANDS[type];
   if (!cmd) return fail(`Unknown command ${type}`);
+  const workers = performersOf(type, args).map((id) => state.officers[id]).filter(Boolean);
+  const busy = workers.find((o) => !isIdle(state, o));
+  if (busy) return fail(`${busy.name} has already been given orders this month.`);
   const res = cmd(state, pid, args, opts);
   if (res.ok) {
+    for (const o of workers) o.usedMonth = monthIndex(state);
     const owner = state.provinces[pid].owner;
     if (type !== 'war' && type !== 'rest' && state.forces[owner]?.human) log(state, res.msg, 'cmd', [owner]);
   }

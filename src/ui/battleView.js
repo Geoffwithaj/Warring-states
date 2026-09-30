@@ -34,6 +34,7 @@ function hexPoints(c, r, scale = 1) {
 
 export function openBattleView(state, { onFinish }) {
   const b = state.battle;
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
   const root = document.getElementById('battle-root');
   root.hidden = false;
   const W = R * SQ3 * (BATTLE_W + 0.5) + PAD * 2;
@@ -43,12 +44,16 @@ export function openBattleView(state, { onFinish }) {
   const top = h('div', { class: 'top' });
   const mid = h('div', { class: 'mid' });
   const logBox = h('div', { class: 'blog' });
-  const side = h('div', { class: 'battle-side' }, top, mid, logBox);
+  // Unit and terrain details live in their own frame so nothing covers the board.
+  const info = h('div', { class: 'battle-info' });
+  const side = h('div', { class: 'battle-side' }, top, info, mid, logBox);
   const resultBox = h('div');
   root.replaceChildren(mapBox, side, resultBox);
   mapBox.style.position = 'relative';
 
-  const ui = { sel: null, mode: null, busy: false, closed: false };
+  const ui = { sel: null, mode: null, busy: false, closed: false, focus: null, armed: null };
+  // Without hover, a first tap on an enemy previews the attack and a second confirms it.
+  const TOUCH = window.matchMedia('(hover: none)').matches;
   const color = (u) => state.forces[b.forces[u.side]]?.color || '#999';
   const oName = (u) => state.officers[u.officer].name;
   const isHumanTurn = () => !b.result && b.humanSides[b.side];
@@ -56,7 +61,18 @@ export function openBattleView(state, { onFinish }) {
   function select(u) {
     ui.sel = u && u.side === b.side && isHumanTurn() && !u.done ? u.id : null;
     ui.mode = null;
+    ui.armed = null;
+    ui.focus = u ? { unit: u.id } : null;
     render();
+  }
+
+  // On touch screens, returns true if this tap only armed the target.
+  function needsConfirm(target) {
+    if (!TOUCH || ui.armed === target.id) return false;
+    ui.armed = target.id;
+    ui.focus = { unit: target.id };
+    render();
+    return true;
   }
 
   function selected() {
@@ -65,6 +81,7 @@ export function openBattleView(state, { onFinish }) {
   }
 
   function afterAction() {
+    ui.armed = null;
     const u = selected();
     if (u && u.done) ui.sel = null;
     ui.mode = null;
@@ -83,6 +100,10 @@ export function openBattleView(state, { onFinish }) {
     const target = unitAt(b, c, r);
     if (!u) {
       if (target) select(target);
+      else {
+        ui.focus = { c, r };
+        renderInfo();
+      }
       return;
     }
     if (ui.mode === 'fire') {
@@ -91,12 +112,20 @@ export function openBattleView(state, { onFinish }) {
     }
     if (ui.mode === 'duel') {
       if (target && meleeTargets(b, u).includes(target)) {
+        if (needsConfirm(target)) return;
         doDuel(state, b, u, target);
         afterAction();
       }
       return;
     }
     if (target && target.side !== u.side) {
+      const inReach = (u.type === 'arc' && shootTargets(b, u).includes(target)) || meleeTargets(b, u).includes(target);
+      if (!inReach) {
+        ui.focus = { unit: target.id };
+        renderInfo();
+        return;
+      }
+      if (needsConfirm(target)) return;
       if (u.type === 'arc' && shootTargets(b, u).includes(target)) doShoot(state, b, u, target);
       else if (meleeTargets(b, u).includes(target)) doAttack(state, b, u, target);
       else return;
@@ -170,8 +199,7 @@ export function openBattleView(state, { onFinish }) {
           poly.setAttribute('stroke-width', '5');
         }
         poly.addEventListener('click', () => onHexClick(c, r));
-        poly.addEventListener('mousemove', (e) => tip(e, `${TERRAIN[ter].label}${ter === 'castle' ? ` (walls ${b.walls})` : ` · defence ×${TERRAIN[ter].def}`}`));
-        poly.addEventListener('mouseleave', () => tip(null));
+        if (!TOUCH) poly.addEventListener('mouseenter', () => { ui.focus = { c, r }; renderInfo(); });
         svg.append(poly);
         if (reach.has(k) && !(c === u?.c && r === u?.r)) svg.append(s('polygon', { class: 'hex reach-fill', points: hexPoints(c, r, 0.9) }));
         if (TERRAIN_GLYPH[ter]) {
@@ -194,27 +222,52 @@ export function openBattleView(state, { onFinish }) {
       g.append(s('rect', { x: -16, y: -R * 0.62 - 7, width: 32 * frac, height: 4, fill: frac > 0.5 ? '#7cc47a' : frac > 0.25 ? '#e0c05f' : '#e0705f' }));
       if (unit.commander) g.append(s('text', { x: 15, y: -8, 'font-size': 12, fill: '#ffe08a', stroke: '#000', 'stroke-width': 0.8 }, '★'));
       g.addEventListener('click', () => onHexClick(unit.c, unit.r));
-      g.addEventListener('mousemove', (e) => tip(e, unitTip(unit)));
-      g.addEventListener('mouseleave', () => tip(null));
+      if (!TOUCH) g.addEventListener('mouseenter', () => { ui.focus = { unit: unit.id }; renderInfo(); });
+      if (unit.id === ui.armed) g.append(s('circle', { r: R * 0.95, fill: 'none', stroke: '#fff', 'stroke-width': 3, 'stroke-dasharray': '3 3' }));
       svg.append(g);
     }
     renderSide(u);
+    renderInfo();
     if (b.result) renderResult();
   }
 
-  function unitTip(u) {
-    const o = state.officers[u.officer];
+  function terrainLine(c, r) {
+    const ter = terrainAt(b, c, r);
+    const burning = b.fire[idx(c, r)] > 0 ? ' · on fire!' : '';
+    return `${TERRAIN[ter].label}${ter === 'castle' ? ` · walls ${b.walls}` : ` · defence ×${TERRAIN[ter].def}`}${burning}`;
+  }
+
+  function renderInfo() {
     const sel = selected();
-    let extra = '';
-    if (sel && sel.side !== u.side) {
-      if (sel.type === 'arc' && shootTargets(b, sel).includes(u)) extra = `<br><span style="color:#ffb080">Volley: ~${fmt(previewShoot(state, b, sel, u).dmg)} casualties</span>`;
-      else if (meleeTargets(b, sel).includes(u)) {
-        const p = previewMelee(state, b, sel, u);
-        extra = `<br><span style="color:#ffb080">Attack: ~${fmt(p.dmg)} dealt / ~${fmt(p.counter)} taken</span>`;
-        if (ui.mode === 'duel') extra += `<br>Duel accepted: ~${Math.round(duelAcceptChance(state, sel, u) * 100)}%`;
+    const focusUnit = ui.focus?.unit !== undefined ? b.units.find((x) => x.id === ui.focus.unit && x.status === 'active') : null;
+    const u = focusUnit || sel;
+    const rows = [];
+    if (u) {
+      const o = state.officers[u.officer];
+      rows.push(h('div', { class: 'row' },
+        h('span', { class: 'swatch', style: { background: color(u) } }),
+        h('b', {}, o.name), u.commander ? ' ★' : '', h('span', { class: 'muted' }, u.side === b.side && u.done ? '(done)' : '')));
+      rows.push(h('div', {}, `${UNIT_TYPES[u.type].label} · ${fmt(u.troops)} troops · morale ${u.morale} · training ${u.training}`));
+      rows.push(h('div', { class: 'muted' }, `INT ${o.int} · WAR ${o.war} · ${terrainLine(u.c, u.r)}`));
+      if (sel && u.side !== sel.side) {
+        if (sel.type === 'arc' && shootTargets(b, sel).includes(u)) {
+          rows.push(h('div', { class: 'preview-line' }, `${state.officers[sel.officer].name}'s volley: ~${fmt(previewShoot(state, b, sel, u).dmg)} casualties, no losses`));
+        } else if (meleeTargets(b, sel).includes(u)) {
+          const p = previewMelee(state, b, sel, u);
+          rows.push(h('div', { class: 'preview-line' }, ui.mode === 'duel'
+            ? `Duel: ${o.name} accepts ~${Math.round(duelAcceptChance(state, sel, u) * 100)}% of the time`
+            : `Attack: ~${fmt(p.dmg)} dealt, ~${fmt(p.counter)} taken`));
+        } else {
+          rows.push(h('div', { class: 'muted' }, 'Out of reach.'));
+        }
+        if (ui.armed === u.id) rows.push(h('div', { class: 'warn' }, 'Tap again to confirm.'));
       }
+    } else if (ui.focus && ui.focus.c !== undefined) {
+      rows.push(h('div', {}, terrainLine(ui.focus.c, ui.focus.r)));
+    } else {
+      rows.push(h('div', { class: 'muted' }, TOUCH ? 'Tap a unit or hex for details.' : 'Point at a unit or hex for details.'));
     }
-    return `<b>${o.name}</b>${u.commander ? ' ★' : ''}<br>${UNIT_TYPES[u.type].label} · ${fmt(u.troops)} troops<br>INT ${o.int} WAR ${o.war} · Trn ${u.training} · Morale ${u.morale}${extra}`;
+    info.replaceChildren(...rows);
   }
 
   function renderSide(u) {
@@ -230,9 +283,6 @@ export function openBattleView(state, { onFinish }) {
     );
     const content = [];
     if (u) {
-      const o = state.officers[u.officer];
-      content.push(h('div', {}, h('b', {}, o.name), u.commander ? ' ★ commander' : '', h('div', { class: 'muted' },
-        `${UNIT_TYPES[u.type].label} · ${fmt(u.troops)} troops · morale ${u.morale} · training ${u.training}`)));
       const canFire = fireTargets(b, u).length > 0;
       const canDuel = meleeTargets(b, u).length > 0;
       const retreatOk = canRetreat(b, u, state, b.retreatOptions);
@@ -243,7 +293,7 @@ export function openBattleView(state, { onFinish }) {
         h('button', { class: 'small danger', disabled: !retreatOk, onclick: () => { doRetreat(state, b, u); afterAction(); } }, 'Withdraw')));
       content.push(h('p', { class: 'hint' }, ui.mode === 'fire' ? 'Click a highlighted hex to set it ablaze. Fire spreads with the wind.'
         : ui.mode === 'duel' ? 'Click an adjacent enemy officer to challenge them.'
-          : u.type === 'arc' ? 'Move (blue hexes), then click an enemy in range to loose arrows.' : 'Move (blue hexes), then click an adjacent enemy to attack.'));
+          : u.type === 'arc' ? `Move (blue hexes), then ${TOUCH ? 'tap' : 'click'} an enemy in range to loose arrows.` : `Move (blue hexes), then ${TOUCH ? 'tap' : 'click'} an adjacent enemy to attack.${TOUCH ? ' Tap once to preview, again to strike.' : ''}`));
     } else if (isHumanTurn()) {
       content.push(h('p', { class: 'hint' }, 'Select one of your units. Each unit may move and then act once per day.'));
     }
@@ -271,7 +321,6 @@ export function openBattleView(state, { onFinish }) {
 
   function close() {
     ui.closed = true;
-    tip(null);
     root.hidden = true;
     root.replaceChildren();
     onFinish();
@@ -279,16 +328,4 @@ export function openBattleView(state, { onFinish }) {
 
   render();
   scheduleAI();
-}
-
-function tip(e, html) {
-  const el = document.getElementById('tooltip');
-  if (!e) {
-    el.hidden = true;
-    return;
-  }
-  el.innerHTML = html;
-  el.hidden = false;
-  el.style.left = `${Math.min(window.innerWidth - 270, e.clientX + 14)}px`;
-  el.style.top = `${e.clientY + 14}px`;
 }

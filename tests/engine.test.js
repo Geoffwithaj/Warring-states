@@ -20,7 +20,7 @@ test('the map is one connected landmass', () => {
   assert.equal(seen.size, Object.keys(ADJACENT).length);
 });
 
-test('a human lord is asked for orders and commands consume the turn', () => {
+test('a province may issue many commands, but each officer works once a month', () => {
   const state = createGame({ humanRulers: ['cao-cao'], seed: 42 });
   newGameStart(state);
   const r = advance(state);
@@ -31,11 +31,20 @@ test('a human lord is asked for orders and commands consume the turn', () => {
   const res = playerCommand(state, 'develop', { field: 'farm', officer: 'cao-cao', gold: 100 });
   assert.ok(res.ok, res.msg);
   assert.ok(p.farm > before);
-  assert.equal(state.awaiting, null);
+  assert.equal(state.awaiting, 'chenliu', 'the turn continues after a command');
+  const again = playerCommand(state, 'develop', { field: 'commerce', officer: 'cao-cao', gold: 50 });
+  assert.equal(again.ok, false, 'Cao Cao is already busy');
+  assert.ok(playerCommand(state, 'develop', { field: 'commerce', officer: 'chen-gong', gold: 50 }).ok);
+  assert.ok(playerCommand(state, 'trade', { mode: 'sell', amount: 100 }).ok, 'trade needs no officer');
   const month = state.month;
+  assert.ok(playerCommand(state, 'rest', {}).ok);
+  assert.equal(state.awaiting, null, 'ending the turn hands over to the next province');
   const r2 = advance(state);
   assert.ok(['await', 'battle', 'captives', 'gameover'].includes(r2.type));
-  if (r2.type === 'await') assert.notEqual(state.month, month);
+  if (r2.type === 'await') {
+    assert.notEqual(state.month, month);
+    assert.ok(playerCommand(state, 'develop', { field: 'farm', officer: 'cao-cao', gold: 10 }).ok, 'officers are fresh next month');
+  }
 });
 
 test('invalid commands are rejected without consuming the turn', () => {

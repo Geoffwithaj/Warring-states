@@ -3,7 +3,7 @@
 
 import { chance, pick } from './rng.js';
 import {
-  officersIn, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
+  officersIn, idleOfficersIn, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
   capitalOf, rulerOf, troopCap,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
@@ -33,7 +33,7 @@ function bestBy(list, score) {
 function chooseArmy(state, pid, fid, keepGarrison) {
   const gov = governorOf(state, pid);
   const ruler = state.forces[fid].ruler;
-  const pool = officersIn(state, pid)
+  const pool = idleOfficersIn(state, pid)
     .filter((o) => o.troops >= 500)
     .sort((a, b) => strengthOf(b) - strengthOf(a));
   const army = [];
@@ -53,7 +53,7 @@ function chooseArmy(state, pid, fid, keepGarrison) {
 function planAttack(state, pid, fid, directive) {
   const d = DIRECTIVES[directive];
   const p = state.provinces[pid];
-  const here = officersIn(state, pid);
+  const here = idleOfficersIn(state, pid);
   const hostile = hostileNeighbors(state, pid, fid);
 
   // Claim empty, unclaimed land with a spare officer.
@@ -93,7 +93,7 @@ function planAttack(state, pid, fid, directive) {
 
 function planDraft(state, pid, fid, directive, frontier) {
   const p = state.provinces[pid];
-  const here = officersIn(state, pid).filter((o) => o.war >= 45 || officersIn(state, pid).length <= 2);
+  const here = idleOfficersIn(state, pid).filter((o) => o.war >= 45 || officersIn(state, pid).length <= 2);
   if (!here.length || p.gold < 120) return null;
   const mine = provinceStrength(state, pid);
   const threat = Math.max(0, ...hostileNeighbors(state, pid, fid).map((n) => provinceStrength(state, n)));
@@ -118,7 +118,7 @@ function planTrain(state, pid, directive, frontier) {
   const avg = units.reduce((s, o) => s + o.training * o.troops, 0) / troops;
   const target = directive === 'military' || directive === 'defend' ? 85 : frontier ? 75 : 55;
   if (avg >= target) return null;
-  const master = bestBy(officersIn(state, pid), (o) => o.war);
+  const master = bestBy(idleOfficersIn(state, pid), (o) => o.war);
   return { type: 'train', args: { officer: master.id } };
 }
 
@@ -127,7 +127,7 @@ function planDevelop(state, pid, directive, frontier) {
   const reserve = frontier ? 200 : 80;
   const budget = Math.min(p.gold - reserve, 300);
   if (budget < 40) return null;
-  const here = officersIn(state, pid);
+  const here = idleOfficersIn(state, pid);
   let field;
   if ((directive === 'defend' || directive === 'military' || frontier) && p.walls < 70 && chance(state, 0.5)) field = 'walls';
   else if (p.flood < 50 && isRiver(pid) && chance(state, 0.5)) field = 'flood';
@@ -143,7 +143,7 @@ function planDevelop(state, pid, directive, frontier) {
 const isRiver = (pid) => PROVINCE_BY_ID[pid].river;
 
 function planPersonnel(state, pid, fid) {
-  const here = officersIn(state, pid);
+  const here = idleOfficersIn(state, pid);
   const charmer = bestBy(here, (o) => o.cha);
   const known = freeOfficersIn(state, pid).filter((o) => o.known.includes(fid));
   if (known.length) return { type: 'recruit', args: { officer: charmer.id, target: known[0].id } };
@@ -170,7 +170,7 @@ function planReinforce(state, pid, fid) {
   const to = pick(state, next);
   const gov = governorOf(state, pid);
   const ruler = state.forces[fid].ruler;
-  const movers = officersIn(state, pid)
+  const movers = idleOfficersIn(state, pid)
     .filter((o) => o.id !== gov?.id && o.id !== ruler && o.troops >= 1000)
     .slice(0, 4)
     .map((o) => o.id);
@@ -183,7 +183,7 @@ function planReinforce(state, pid, fid) {
 function planDiplomacy(state, pid, fid) {
   if (capitalOf(state, fid) !== pid || !chance(state, 0.05)) return null;
   const p = state.provinces[pid];
-  const envoy = bestBy(officersIn(state, pid), (o) => o.cha + o.int);
+  const envoy = bestBy(idleOfficersIn(state, pid), (o) => o.cha + o.int);
   const neighbors = new Set();
   for (const q of Object.values(state.provinces)) {
     if (q.owner !== fid) continue;
@@ -211,18 +211,18 @@ export function aiDirective(state, pid, fid) {
   return chance(state, 0.35 + aggression * 0.4) ? 'expand' : 'balanced';
 }
 
-export function planProvinceTurn(state, pid, directive, { isAI }) {
+export function planProvinceTurn(state, pid, directive, { isAI, skip = new Set() }) {
   const p = state.provinces[pid];
   const fid = p.owner;
-  const here = officersIn(state, pid);
+  const here = idleOfficersIn(state, pid);
   if (!here.length) return { type: 'rest', args: {} };
   const frontier = hostileNeighbors(state, pid, fid).length > 0;
 
-  if (p.food < foodUpkeep(state, pid) * 4 && p.gold > 60) {
+  if (!skip.has('trade') && p.food < foodUpkeep(state, pid) * 4 && p.gold > 60) {
     const amount = Math.min(3000, Math.floor(((p.gold - 50) / state.foodPrice) * 100 / 100) * 100);
     if (amount >= 100) return { type: 'trade', args: { mode: 'buy', amount } };
   }
-  if (p.order < 35 && p.food > 1500) {
+  if (!skip.has('relief') && p.order < 35 && p.food > 1500) {
     const o = bestBy(here, (x) => x.cha);
     return { type: 'relief', args: { officer: o.id, food: Math.min(1000, p.food - 1000) } };
   }
@@ -238,7 +238,7 @@ export function planProvinceTurn(state, pid, directive, { isAI }) {
   if (directive === 'develop') plans.unshift(() => (chance(state, 0.8) ? planDevelop(state, pid, directive, frontier) : null));
   for (const plan of plans) {
     const action = plan();
-    if (action) return action;
+    if (action && !skip.has(action.type)) return action;
   }
   return { type: 'rest', args: {} };
 }

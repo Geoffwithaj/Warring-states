@@ -41,18 +41,46 @@ function checkGameOver(state) {
   }
 }
 
+const MAX_ACTIONS = 12;
+// How often a computer-run province repeats a kind of order in one turn, so
+// spare officers end up developing the land rather than drilling endlessly.
+const PER_TURN = { trade: 1, relief: 1, train: 1, draft: 2, search: 2, recruit: 2, move: 1, gift: 1, alliance: 1 };
+
+// Plans and carries out a computer-run turn; `execute` issues each order.
+function actUntilDone(state, pid, directive, isAI, execute, onDone) {
+  const counts = {};
+  const skip = new Set();
+  for (let i = 0; i < MAX_ACTIONS; i++) {
+    const action = planProvinceTurn(state, pid, directive, { isAI, skip });
+    if (action.type === 'rest') break;
+    const res = execute(action);
+    if (!res.ok) {
+      skip.add(action.type);
+      continue;
+    }
+    onDone(action, res);
+    counts[action.type] = (counts[action.type] || 0) + 1;
+    if (counts[action.type] >= (PER_TURN[action.type] ?? Infinity)) skip.add(action.type);
+    if (action.type === 'war') break;
+  }
+}
+
+// A computer-run province acts until it has nothing useful left to do: every
+// officer can take one job, and a war ends the province's turn.
 function runComputerTurn(state, pid) {
   const p = state.provinces[pid];
   const f = state.forces[p.owner];
   const delegated = f.human && p.delegate;
   const directive = delegated ? p.delegate.directive : aiDirective(state, pid, f.id);
-  const action = planProvinceTurn(state, pid, directive, { isAI: !f.human });
-  const res = executeCommand(state, pid, action.type, action.args);
-  if (delegated && res.ok && action.type !== 'rest') {
-    const gov = governorOf(state, pid);
-    log(state, `[${p.name}] Governor ${gov?.name ?? ''} (${DIRECTIVES[directive].label}): ${res.msg}`, 'delegate', [f.id]);
-  }
-  return { action, res };
+  const done = [];
+  actUntilDone(state, pid, directive, !f.human, (action) => executeCommand(state, pid, action.type, action.args), (action, res) => {
+    done.push({ action, res });
+    if (delegated) {
+      const gov = governorOf(state, pid);
+      log(state, `[${p.name}] Governor ${gov?.name ?? ''} (${DIRECTIVES[directive].label}): ${res.msg}`, 'delegate', [f.id]);
+    }
+  });
+  return done;
 }
 
 // Advance by one step: a single province's turn, or the end of the month.
@@ -85,10 +113,12 @@ export function step(state) {
     return { type: 'await', pid };
   }
   const owner = p.owner;
-  const { action, res } = runComputerTurn(state, pid);
+  const done = runComputerTurn(state, pid);
   state.queueIndex++;
+  const last = done[done.length - 1];
   let war = null;
-  if (res.ok && action.type === 'war') {
+  if (last?.action.type === 'war') {
+    const { action, res } = last;
     const to = action.args.to;
     war = { from: pid, to, attacker: owner, defender: res.war.kind === 'battle' ? res.war.battle.forces.def : null, winner: 'att' };
     if (res.war.kind === 'battle') {
@@ -99,7 +129,7 @@ export function step(state) {
       war.winner = resolveAuto(state, res.war.battle).winner;
     }
   }
-  return { type: 'acted', pid, owner, action, ok: res.ok, msg: res.msg, war };
+  return { type: 'acted', pid, owner, actions: done.map((d) => d.action), msgs: done.map((d) => d.res.msg), war };
 }
 
 // Advance until the game needs the player. Returns what it is waiting for:
@@ -118,24 +148,35 @@ export function advance(state, { stopAtMonthEnd = false, maxMonths = Infinity } 
   }
 }
 
-// The player issues the command for the province currently awaiting orders.
+// Commands that end the awaiting province's turn. Everything else can be
+// followed by further commands, with each officer taking one job a month.
+const TURN_ENDERS = new Set(['war', 'rest']);
+
+// The player issues a command for the province currently awaiting orders.
 export function playerCommand(state, type, args) {
   const pid = state.awaiting;
   if (!pid) return { ok: false, msg: 'No province is awaiting orders.' };
   const res = executeCommand(state, pid, type, args, { interactiveAttacker: true });
   if (!res.ok) return res;
-  state.awaiting = null;
-  state.queueIndex++;
+  if (TURN_ENDERS.has(type)) endProvinceTurn(state);
   if (res.war?.kind === 'battle') state.battle = res.war.battle;
   return res;
 }
 
-// Let the governor handle just this month's turn for an awaiting province.
+export function endProvinceTurn(state) {
+  if (!state.awaiting) return;
+  state.awaiting = null;
+  state.queueIndex++;
+}
+
+// The governor handles the rest of this province's turn.
 export function governorTakesTurn(state, directive = 'balanced') {
   const pid = state.awaiting;
   if (!pid) return null;
-  const action = planProvinceTurn(state, pid, directive, { isAI: false });
-  return playerCommand(state, action.type, action.args);
+  const msgs = [];
+  actUntilDone(state, pid, directive, false, (action) => playerCommand(state, action.type, action.args), (action, res) => msgs.push(res.msg));
+  endProvinceTurn(state);
+  return { ok: true, msg: msgs.length ? msgs.join(' ') : 'The governor finds nothing to do this month.', msgs };
 }
 
 export function concludeBattle(state) {

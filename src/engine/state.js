@@ -174,6 +174,10 @@ export const officerList = (state) => Object.values(state.officers);
 export const officersIn = (state, pid) =>
   officerList(state).filter((o) => o.status === 'serving' && o.province === pid);
 
+// Each officer can carry out one assignment per month.
+export const isIdle = (state, o) => o.usedMonth !== state.year * 12 + state.month - 1;
+export const idleOfficersIn = (state, pid) => officersIn(state, pid).filter((o) => isIdle(state, o));
+
 export const captivesIn = (state, pid) =>
   officerList(state).filter((o) => o.status === 'captive' && o.province === pid);
 
@@ -232,7 +236,7 @@ export const dateLabel = (state) => `${state.year} AD, ${MONTH_NAMES[state.month
 
 export function log(state, msg, kind = 'info', forces = null) {
   state.log.push({ date: `${state.year}.${state.month}`, msg, kind, forces });
-  if (state.log.length > 400) state.log.splice(0, state.log.length - 400);
+  if (state.log.length > 1500) state.log.splice(0, state.log.length - 1500);
 }
 
 export const humanForces = (state) => Object.values(state.forces).filter((f) => f.alive && f.human);

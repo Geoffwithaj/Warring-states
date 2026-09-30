@@ -10,7 +10,7 @@ import { SCENARIOS } from '../data/scenarios.js';
 import { officerId } from '../data/officers.js';
 import {
   createGame, dateLabel, SEASONS, forceName, provincesOf, officersOf, capitalOf, areAllied, monthIndex,
-  officerList,
+  officerList, log,
 } from '../engine/state.js';
 import { newGameStart, step, playerCommand, governorTakesTurn, concludeBattle } from '../engine/turn.js';
 import { recruitChance, recruitCaptive, releaseCaptive, executeCaptive } from '../engine/war.js';
@@ -234,8 +234,10 @@ function ctxFor(pid) {
       openCommandDialog(ctxFor(pid), type);
     },
     governorDecides: () => {
+      const name = state.provinces[pid].name;
       const res = governorTakesTurn(state);
-      if (res) toast(res.msg);
+      if (res) toast(res.msgs.length ? `The governor of ${name} gave ${res.msgs.length} order${res.msgs.length > 1 ? 's' : ''} (see the chronicle).` : res.msg);
+      for (const m of res?.msgs ?? []) log(state, `[${name}] ${m}`, 'delegate', [viewer]);
       run();
     },
     showMap: () => { setView('map'); render(); },
@@ -250,7 +252,7 @@ function issue(type, args) {
     toast(res.msg);
     return false;
   }
-  if (type !== 'war' || res.war.kind === 'captured') toast(res.msg);
+  if (type !== 'rest' && (type !== 'war' || res.war.kind === 'captured')) toast(res.msg);
   run();
   return undefined;
 }
@@ -608,7 +610,7 @@ export function showHelp() {
   openModal({
     title: 'How to play', wide: true,
     body: h('div', {},
-      h('p', {}, 'Each month, every province of every lord takes one turn in a random order. When one of your provinces comes up, it pulses gold on the map and its orders appear in the side panel. Choose one command: Develop, Military, Personnel, Move, War, Trade, Diplomacy or Rest.'),
+      h('p', {}, 'Each month, every province of every lord takes one turn in a random order. When one of your provinces comes up, its orders screen appears. Give as many orders as you like — Develop, Military, Personnel, Move, War, Trade, Diplomacy — but each officer can take only one job a month. War ends the province\u2019s turn; otherwise press End turn when you are done, or let the governor finish the turn.'),
       h('h3', {}, 'Economy'),
       h('p', {}, 'Gold arrives every month from commerce and population; food is harvested once a year in the 7th month. Your armies eat food every month. Public order multiplies all income: tax heavily and it falls. Floods strike river provinces in summer unless dikes (flood control) are maintained. Farmland raises the harvest and the population the land can support.'),
       h('h3', {}, 'Delegation & assignments'),
