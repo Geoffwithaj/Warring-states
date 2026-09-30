@@ -42,7 +42,8 @@ export function renderProvincePanel(el, ctx) {
     `${meta.terrain[0].toUpperCase() + meta.terrain.slice(1)} terrain`,
     meta.river ? ' · river (flood risk)' : '', meta.horses ? ' · horse country' : '',
     gov ? ` · Governor ${gov.name}` : '',
-    p.owner && !mine && areAllied(state, p.owner, ctx.viewer) ? ' · Allied' : ''));
+    p.owner && !mine && areAllied(state, p.owner, ctx.viewer) ? ' · Allied' : '',
+    p.homeland && p.homeland === p.owner ? ' · Homeland' : p.homeland ? ` · Claimed as homeland by ${forceName(state, p.homeland)}` : ''));
 
   if (awaiting) {
     const all = officersIn(state, pid);
@@ -61,6 +62,7 @@ export function renderProvincePanel(el, ctx) {
       cmd('War', 'war', 'Attack an adjacent province (ends the turn)'),
       cmd('Trade', 'trade', 'Buy or sell food'),
       cmd('Diplomacy', 'diplomacy', 'Gifts and alliances'),
+      cmd('Plots', 'plots', 'Espionage: gather intelligence on a lord'),
       h('button', { onclick: ctx.governorDecides, title: 'Let the governor give orders to the free officers and end the turn' }, 'Governor finishes'),
       h('button', { class: 'primary', onclick: () => ctx.issue('rest', {}) }, 'End turn ▶'),
     ));

@@ -5,13 +5,16 @@
 import { chance, clamp, randInt } from './rng.js';
 import {
   officersIn, freeOfficersIn, log, forceName, rulerOf, enlist, troopCap, monthIndex, isIdle,
-  provincesOf,
+  provincesOf, capitalOf,
 } from './state.js';
 import { isAdjacent, PROVINCE_BY_ID } from './map.js';
 import {
   DEV_FIELDS, TAX, TASKS, fieldMax, devGain, reliefGain, trainGain, draftCost, maxDraft, skill,
 } from './economy.js';
-import { declareWar, validateWar, recruitChance, recruitCaptive } from './war.js';
+import { declareWar, validateWar, recruitChance, recruitCaptive, imprison } from './war.js';
+import {
+  opinionOf, trustOf, traitOf, remember, makeContact, gatherIntelligence, SPY_COST,
+} from './politics/index.js';
 
 const ok = (msg, extra = {}) => ({ ok: true, msg, ...extra });
 const fail = (msg) => ({ ok: false, msg });
@@ -205,26 +208,52 @@ export const COMMANDS = {
     gold = Math.floor(gold);
     if (!o || !f?.alive || gold <= 0 || gold > p.gold) return fail('Invalid gift.');
     p.gold -= gold;
-    const gain = Math.round((gold / 12) * skill(o, 'int'));
-    f.relations[o.force] = clamp((f.relations[o.force] ?? 50) + gain, 0, 100);
-    return ok(`${o.name} delivers ${gold} gold to ${forceName(state, target)}. Relations improve (${Math.round(f.relations[o.force])}).`);
+    // Each further gift buys a little less goodwill.
+    const before = opinionOf(state, target, o.force);
+    const gain = (gold / 12) * skill(o, 'int') * clamp((90 - before) / 40, 0.1, 1);
+    remember(state, target, o.force, 'gift', gain);
+    makeContact(state, o.force, target);
+    return ok(`${o.name} delivers ${gold} gold to ${forceName(state, target)}, who receives it warmly.`);
   },
 
   alliance(state, pid, { officer, target }) {
     const o = here(state, pid, officer);
     const f = state.forces[target];
     if (!o || !f?.alive) return fail('Invalid envoy.');
-    const rel = f.relations[o.force] ?? 50;
     const p = allianceChance(state, o, target);
+    makeContact(state, o.force, target);
     if (chance(state, p)) {
       const until = monthIndex(state) + 36;
       f.alliances[o.force] = until;
       state.forces[o.force].alliances[target] = until;
+      delete f.truces[o.force];
+      delete state.forces[o.force].truces[target];
+      remember(state, target, o.force, 'alliance');
+      remember(state, o.force, target, 'alliance');
       log(state, `${forceName(state, o.force)} and ${forceName(state, target)} swear an alliance for three years.`, 'good', [o.force, target]);
       return ok(`${forceName(state, target)} agrees to an alliance!`);
     }
-    f.relations[o.force] = clamp(rel - 5, 0, 100);
+    remember(state, target, o.force, 'rebuffed');
     return ok(`${forceName(state, target)} rebuffs ${o.name}.`);
+  },
+
+  // Send an officer to learn what they can of a lord's court.
+  spy(state, pid, { officer, target }) {
+    const p = state.provinces[pid];
+    const o = here(state, pid, officer);
+    const f = state.forces[target];
+    if (!o || !f?.alive || target === o.force) return fail('Invalid mission.');
+    if (p.gold < SPY_COST) return fail(`The mission needs ${SPY_COST} gold.`);
+    p.gold -= SPY_COST;
+    const r = gatherIntelligence(state, o, target);
+    const lord = forceName(state, target);
+    if (r.ok) return ok(`${o.name} returns from ${lord}'s court with news.`, { intel: r.entries });
+    if (r.caught) {
+      imprison(state, target, capitalOf(state, target), [o]);
+      log(state, `${o.name} is caught spying on ${lord} and thrown in prison.`, 'warn', [p.owner, target]);
+      return ok(`${o.name} was caught at ${lord}'s court and taken prisoner!`, { intel: [] });
+    }
+    return ok(`${o.name} returns from ${lord}'s court having learned nothing of use.`, { intel: [] });
   },
 
   rest() {
@@ -233,12 +262,14 @@ export const COMMANDS = {
 };
 
 export function allianceChance(state, envoy, target) {
-  const rel = state.forces[target].relations[envoy.force] ?? 50;
-  // Lords share nothing with those much larger than themselves.
+  const rel = opinionOf(state, target, envoy.force);
+  // Lords share nothing with those much larger than themselves, and the
+  // honourable care more whether the other side keeps its word.
   const mine = provincesOf(state, envoy.force).length;
   const theirs = provincesOf(state, target).length;
   const wariness = mine > theirs * 2 ? 0.15 : 0;
-  return clamp(((rel - 45) / 45) * skill(envoy, 'cha') * 0.7 - wariness, 0, 0.9);
+  const faith = ((trustOf(state, envoy.force) - 50) / 200) * (traitOf(state, target, 'honour') / 3);
+  return clamp(((rel - 45) / 45) * skill(envoy, 'cha') * 0.7 + faith - wariness, 0, 0.9);
 }
 
 // The officers a command puts to work. As in RTK II, a province may issue any
@@ -246,7 +277,7 @@ export function allianceChance(state, envoy, target) {
 const PERFORMERS = {
   develop: (a) => [a.officer], relief: (a) => [a.officer], draft: (a) => [a.officer],
   train: (a) => [a.officer], search: (a) => [a.officer], recruit: (a) => [a.officer],
-  gift: (a) => [a.officer], alliance: (a) => [a.officer], move: (a) => a.officers, war: (a) => a.officers,
+  gift: (a) => [a.officer], alliance: (a) => [a.officer], spy: (a) => [a.officer], move: (a) => a.officers, war: (a) => a.officers,
 };
 
 export const performersOf = (type, args) => (PERFORMERS[type]?.(args) ?? []).filter(Boolean);

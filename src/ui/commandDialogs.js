@@ -14,6 +14,8 @@ import {
   changeUnitType, unitChangeCost,
 } from '../engine/commands.js';
 import { foodNeeded, MAX_ARMY, releaseCaptive, executeCaptive } from '../engine/war.js';
+import { spyChance, factsFor, SPY_COST, inTruce, canSeeStanding } from '../engine/politics/index.js';
+import { standingBlock, reputationText } from './politicsView.js';
 
 const pct = (p) => `${Math.round(p * 100)}%`;
 const officerOpts = (list, stat) => list.map((o) => [o.id, `${o.name}${stat ? ` (${stat.toUpperCase()} ${o[stat]})` : ''}`]);
@@ -335,7 +337,7 @@ export function openMove(ctx, initial) {
 
 export function warTargets(state, pid) {
   const p = state.provinces[pid];
-  return ADJACENT[pid].filter((n) => state.provinces[n].owner !== p.owner && !areAllied(state, p.owner, state.provinces[n].owner));
+  return ADJACENT[pid].filter((n) => state.provinces[n].owner !== p.owner);
 }
 
 export function openWar(ctx, initial) {
@@ -360,7 +362,11 @@ export function openWar(ctx, initial) {
     const ratio = theirs ? mine / theirs : Infinity;
     const odds = !t.owner || !defOfficers.some((o) => o.troops > 0) ? 'The province is undefended.'
       : ratio > 1.5 ? 'Your advisers are confident.' : ratio > 1.1 ? 'The odds favour you.' : ratio > 0.85 ? 'A hard-fought battle.' : 'Your advisers urge caution.';
+    const faith = t.owner && areAllied(state, p.owner, t.owner)
+      ? 'This lord is your ally. Attacking breaks the alliance, and every lord will hear of your betrayal.'
+      : t.owner && inTruce(state, p.owner, t.owner) ? 'You are under truce with this lord. Attacking breaks it and costs you trust.' : null;
     intel.replaceChildren(
+      faith ? h('div', { class: 'bad' }, faith) : '',
       h('div', {}, h('b', {}, t.name), ` — ${t.owner ? forceName(state, t.owner) : 'Unclaimed'}`),
       h('div', { class: 'muted' }, `Defenders: ${defOfficers.length} officers, ${fmt(troopsIn(state, form.to))} troops, walls ${t.walls}, food ${fmt(t.food)}`),
       h('div', {}, `Your army: ${army.length} officers, ${fmt(troops)} troops. `, h('span', { class: ratio > 1.1 ? 'good' : ratio > 0.85 ? 'warn' : 'bad' }, odds)));
@@ -443,13 +449,14 @@ export function openDiplomacy(ctx) {
   const render = () => {
     const target = state.forces[form.target];
     const envoy = state.officers[form.envoy];
-    const rel = Math.round(target.relations[fid] ?? 50);
     const allied = areAllied(state, fid, form.target);
     body.replaceChildren(h('div', { class: 'form' },
       h('span', {}, 'Lord'),
       select(others.map((f) => [f.id, `${forceName(state, f.id)} (${Object.values(state.provinces).filter((q) => q.owner === f.id).length} provinces)`]), form.target, (v) => { form.target = v; render(); }),
       h('span', {}, 'Standing'),
-      h('span', {}, `Relations ${rel}/100`, allied ? h('span', { class: 'tag gold' }, 'Allied') : null),
+      standingBlock(state, fid, form.target),
+      h('span', {}, 'Reputation'),
+      h('span', {}, reputationText(state, form.target), h('span', { class: 'muted' }, ` · yours: ${reputationText(state, fid)}`)),
       h('span', {}, 'Envoy'),
       select(officerOpts([...officers].sort((a, b) => b.cha - a.cha), 'cha'), form.envoy, (v) => { form.envoy = v; render(); }),
       h('span', {}, 'Mission'),
@@ -458,8 +465,11 @@ export function openDiplomacy(ctx) {
         h('button', { class: form.mode === 'alliance' ? 'primary small' : 'small', disabled: allied, onclick: () => { form.mode = 'alliance'; render(); } }, 'Propose alliance')),
       ...(form.mode === 'gift'
         ? [h('span', {}, 'Gold'), slider(form.gold, { min: 0, max: p.gold, step: 10, onInput: (v) => (form.gold = v) }),
-          h('div', { class: 'full hint' }, 'Gifts warm relations; a clever envoy makes them go further.')]
-        : [h('div', { class: 'full preview' }, `Chance the alliance is accepted: ${pct(allianceChance(state, envoy, form.target))}. Allies may not attack one another for three years.`)]),
+          h('div', { class: 'full hint' }, 'Gifts warm relations, each a little less than the last; a clever envoy makes them go further. Any envoy lets you see how the lord regards you for a year.')]
+        : [h('div', { class: 'full preview' }, canSeeStanding(state, fid, form.target)
+          ? `Chance the alliance is accepted: ${pct(allianceChance(state, envoy, form.target))}. `
+          : 'You know too little of this lord to judge whether they would agree. ',
+        'An alliance lasts three years, then a truce holds for one. Breaking either costs you trust with every lord.')]),
     ));
   };
   render();
@@ -470,6 +480,43 @@ export function openDiplomacy(ctx) {
       onClick: () => form.mode === 'gift'
         ? ctx.issue('gift', { officer: form.envoy, target: form.target, gold: form.gold })
         : ctx.issue('alliance', { officer: form.envoy, target: form.target }),
+    }],
+  });
+}
+
+// ---- Plots ------------------------------------------------------------------
+
+export function openPlots(ctx) {
+  const { state, pid } = ctx;
+  const p = state.provinces[pid];
+  const fid = p.owner;
+  const others = Object.values(state.forces).filter((f) => f.alive && f.id !== fid);
+  const officers = idleOfficersIn(state, pid).sort((a, b) => b.int - a.int);
+  if (!officers.length) return ctx.toast(NO_ONE);
+  const form = { target: others[0].id, agent: officers[0].id };
+  const body = h('div');
+  const render = () => {
+    const agent = state.officers[form.agent];
+    const n = factsFor(agent);
+    body.replaceChildren(h('div', { class: 'form' },
+      h('span', {}, 'Mission'), h('span', {}, h('b', {}, 'Gather intelligence')),
+      h('span', {}, 'Lord'),
+      select(others.map((f) => [f.id, forceName(state, f.id)]), form.target, (v) => { form.target = v; render(); }),
+      h('span', {}, 'Agent'),
+      select(officerOpts(officers, 'int'), form.agent, (v) => { form.agent = v; render(); }),
+      h('div', { class: 'full preview' },
+        `Cost ${SPY_COST} gold. Chance of success: ${pct(spyChance(state, agent, form.target))}. `,
+        `A successful agent brings back up to ${n} things about the lord's temperament, desires, grudges and court`,
+        agent.int >= 75 ? ', plainly told.' : ', some only as rumour.',
+        h('div', { class: 'hint' }, 'A failed agent may be caught and imprisoned, and the lord will not forget it. The sharper the minds at their court, the harder the task.')),
+      p.gold < SPY_COST ? h('div', { class: 'full bad' }, `Not enough gold (${SPY_COST} needed).`) : ''));
+  };
+  render();
+  return openModal({
+    title: 'Plots', body, wide: true,
+    actions: [{ label: 'Cancel' }, {
+      label: 'Send agent', primary: true,
+      onClick: () => ctx.issue('spy', { officer: form.agent, target: form.target }),
     }],
   });
 }
@@ -488,7 +535,7 @@ export function openCommandDialog(ctx, type) {
   }
   const map = {
     develop: openDevelop, military: openMilitary, personnel: openPersonnel, move: openMove,
-    war: openWar, trade: openTrade, diplomacy: openDiplomacy,
+    war: openWar, trade: openTrade, diplomacy: openDiplomacy, plots: openPlots,
   };
   return map[type](ctx);
 }

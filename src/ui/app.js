@@ -5,6 +5,7 @@ import { openModal, confirmModal } from './modal.js';
 import { createMapView, provinceTooltip } from './mapView.js';
 import { renderProvincePanel, officerDetail } from './provincePanel.js';
 import { openCommandDialog } from './commandDialogs.js';
+import { standingText, reputationText, showIntelReport, showIntelJournal } from './politicsView.js';
 import { openBattleView } from './battleView.js';
 import { SCENARIOS } from '../data/scenarios.js';
 import { officerId } from '../data/officers.js';
@@ -254,7 +255,8 @@ function issue(type, args) {
     toast(res.msg);
     return false;
   }
-  if (type !== 'rest' && (type !== 'war' || res.war.kind === 'captured')) toast(res.msg);
+  if (res.intel) showIntelReport(state, res.msg, res.intel);
+  else if (type !== 'rest' && (type !== 'war' || res.war.kind === 'captured')) toast(res.msg);
   run();
   return undefined;
 }
@@ -459,6 +461,7 @@ function renderTopbar() {
     h('span', { class: 'wide-only row' },
       h('button', { class: 'small', onclick: showRealm }, 'Realm'),
       h('button', { class: 'small', onclick: showOfficers }, 'Officers'),
+      h('button', { class: 'small', onclick: () => showIntelJournal(state, viewer) }, 'Intel'),
       h('button', { class: 'small', onclick: showSaveLoad }, 'Save / Load'),
       h('button', { class: 'small', onclick: () => showHelp() }, 'Help'),
       h('button', { class: 'small', onclick: quit }, 'Quit')),
@@ -477,6 +480,7 @@ function showMenu() {
       item('Realm overview', showRealm),
       item('Your officers', showOfficers),
       item('Chronicle (message log)', showChronicle),
+      item('Intelligence', () => showIntelJournal(state, viewer)),
       item(`Playback speed: ${SPEEDS[speed].label}`, () => { cycleSpeed(); showMenu(); }),
       item('Save / Load', showSaveLoad),
       item('How to play', () => showHelp()),
@@ -557,7 +561,7 @@ function showRealm() {
     const provs = provincesOf(state, f.id);
     const offs = officersOf(state, f.id);
     const troops = offs.reduce((s, o) => s + o.troops, 0);
-    const rel = viewer && f.id !== viewer ? Math.round(f.relations[viewer] ?? 50) : '—';
+    const rel = standingText(state, viewer, f.id);
     const allied = viewer && areAllied(state, viewer, f.id);
     const until = allied ? state.forces[viewer].alliances[f.id] - monthIndex(state) : 0;
     return { f, provs, offs, troops, rel, allied, until };
@@ -565,12 +569,13 @@ function showRealm() {
   openModal({
     title: 'The Realm', wide: true,
     body: h('table', { class: 'officers' },
-      h('thead', {}, h('tr', {}, ['Lord', 'Capital', 'Provinces', 'Officers', 'Troops', 'Gold', 'Attitude to you'].map((t) => h('th', {}, t)))),
+      h('thead', {}, h('tr', {}, ['Lord', 'Capital', 'Provinces', 'Officers', 'Troops', 'Gold', 'Reputation', 'Attitude to you'].map((t) => h('th', {}, t)))),
       h('tbody', {}, rows.map((r) => h('tr', { class: 'clickable', onclick: () => { selected = capitalOf(state, r.f.id); render(); } },
         h('td', {}, h('span', { class: 'swatch', style: { background: r.f.color } }), ' ', forceName(state, r.f.id), r.f.human ? h('span', { class: 'tag gold' }, 'Player') : null),
         h('td', {}, state.provinces[capitalOf(state, r.f.id)]?.name ?? '—'),
         h('td', { class: 'n' }, r.provs.length), h('td', { class: 'n' }, r.offs.length), h('td', { class: 'n' }, fmt(r.troops)),
         h('td', { class: 'n' }, fmt(r.provs.reduce((s, p) => s + p.gold, 0))),
+        h('td', {}, reputationText(state, r.f.id)),
         h('td', {}, r.rel, r.allied ? h('span', { class: 'tag gold' }, `Allied ${r.until} mo`) : null))))),
   });
 }
@@ -615,7 +620,7 @@ export function showHelp() {
   openModal({
     title: 'How to play', wide: true,
     body: h('div', {},
-      h('p', {}, 'Each month, every province of every lord takes one turn in a random order. When one of your provinces comes up, its orders screen appears. Give as many orders as you like — Develop, Military, Personnel, Move, War, Trade, Diplomacy — but each officer can take only one job a month. War ends the province\u2019s turn; otherwise press End turn when you are done, or let the governor finish the turn.'),
+      h('p', {}, 'Each month, every province of every lord takes one turn in a random order. When one of your provinces comes up, its orders screen appears. Give as many orders as you like — Develop, Military, Personnel, Move, War, Trade, Diplomacy, Plots — but each officer can take only one job a month. War ends the province\u2019s turn; otherwise press End turn when you are done, or let the governor finish the turn.'),
       h('h3', {}, 'Economy'),
       h('p', {}, 'Gold arrives every month from commerce and population; food is harvested once a year in the 7th month. Your armies eat food every month. Public order multiplies all income: tax heavily and it falls. Floods strike river provinces in summer unless dikes (flood control) are maintained. Farmland raises the harvest and the population the land can support.'),
       h('p', {}, 'Geography sets each province\u2019s potential: every fertile tile holds 25 Farmland and every market site 60 Commerce. The Yellow River plain has room for many fields; the mountain north and far south have little. Every 25 Farmland is one field on the battle map, every 60 Commerce one market.'),
@@ -626,6 +631,10 @@ export function showHelp() {
       h('p', {}, 'The castle fights too: each defender turn its walls shoot at every attacker beside them, and strong walls shelter the garrison. Assault the walls with infantry until they are breached (half strength); only then can an empty castle be entered, and an occupied castle holds until its defender falls. Wall damage lasts, so rebuild after a siege. Refusing a duel shames the whole army. Win by taking the castle, routing the enemy commander, or destroying their army within 30 days.'),
       h('p', {}, 'Not every war is a siege. A unit that begins its turn on an enemy field or market can Raze it: a field yields 150 grain for your army, a market 40 gold carried by the unit, and the province loses that tile\u2019s development until it is rebuilt. Raiding is an act of war like any other. Withdraw from your own edge of the map to leave in good order, keeping troops and plunder; a routed unit loses men and its plunder, and a captured officer\u2019s plunder returns to the province. If a commander withdraws, the rest fall back with light losses; if the commander is broken, the army routs.'),
       h('p', {}, 'When you defend, you place your units before the first day: anywhere except the attackers\u2019 approach, with the commander in the castle. Guard the fields and markets you can, or Auto-deploy.'),
+      h('h3', {}, 'Politics & espionage'),
+      h('p', {}, 'Every lord has a hidden temperament — ambition, honour, boldness, vengefulness and guile — which a successor inherits. Lords remember what others have done to them: gifts, alliances, attacks, raids, executions. Old deeds fade, grudges slowest in the vengeful. Each lord also has a reputation for keeping faith that everyone can see. Attacking an ally breaks the alliance and costs trust with every lord; a lapsed alliance leaves a year\u2019s truce, and breaking that costs trust too.'),
+      h('p', {}, 'The provinces a house starts with are its homeland. Its men fight harder there, it will pay dearly to recover them, and it resents whoever holds them. Land held for ten settled years becomes homeland in turn.'),
+      h('p', {}, 'You can always see how your neighbours regard you, and why, as far as your own dealings go. Distant lords are unknown until you send an envoy. To learn a lord\u2019s temperament, desires and grudges, use Plots → Gather intelligence: a clever agent brings back more, and says it more plainly. Reports are kept in the Intelligence journal.'),
       h('h3', {}, 'Officers'),
       h('p', {}, 'Intelligence drives development, fire and archery; War drives combat and duels; Charisma drives recruiting, relief and order. Search provinces for talented free officers; young heroes come of age over the years. Keep loyalty up with rewards, or officers may desert.')),
   });

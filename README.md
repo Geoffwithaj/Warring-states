@@ -53,7 +53,7 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 
 **Turn structure (as in RTK II)**
 - Each month every province of every lord takes one turn, in a random order. In its turn a province
-  can give any number of orders (Develop, Military, Personnel, Move, War, Trade, Diplomacy), but each
+  can give any number of orders (Develop, Military, Personnel, Move, War, Trade, Diplomacy, Plots), but each
   officer can take only one job a month; officerless orders like trading are unlimited. War ends the
   turn; otherwise press End turn, or let the governor finish it. Computer lords play by the same rule.
 
@@ -126,6 +126,29 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 - Battles between two computer lords resolve instantly with the same engine. Your battles can be played
   by hand or auto-resolved.
 
+**Politics and espionage (new)**
+- Every house has a hidden temperament — ambition, honour, boldness, vengefulness and guile — set
+  from the novel (Cao Cao ambitious and cunning, Liu Bei honourable and cautious, Yuan Shao ambitious
+  but hesitant…). An heir inherits the house's temperament and carries on its designs.
+- **Opinion** is built from remembered deeds — gifts, alliances, attacks, raids, conquests,
+  executions, releases, spies caught — each fading at its own pace, grudges slowest in the vengeful.
+  Attacking a lord angers that lord's friends; fighting a common enemy warms others.
+- **Trust** is a lord's reputation for keeping faith, visible to all. Allies can be attacked, but it
+  breaks the alliance and costs trust with every lord. A lapsed alliance leaves a year's truce, and
+  breaking that costs trust too.
+- **Homelands**: the provinces a house starts with. Its troops fight harder there, it pays dearly to
+  recover them and resents whoever holds them. Land held for ten settled years becomes homeland.
+- **What you can see**: how neighbouring lords regard you, and the deeds behind it. Distant lords are
+  unknown until you send an envoy (their standing stays visible for a year).
+- **Plots → Gather intelligence**: send an officer to a lord's court. Intelligence decides success, how
+  much they bring back and how plainly: *"Dong Zhuo would betray an ally without a second thought."
+  "Yuan Shao distrusts Yuan Shu, though they are allies." "Sun Jian desires Jiangxia above all
+  else."* A failed agent may be caught and imprisoned. Reports go in the Intelligence journal.
+- The 190 scenario starts with the coalition bound against Dong Zhuo, and old rivalries (the Yuan
+  brothers; Gongsun Zan and Liu Yu).
+- The political engine lives in `src/engine/politics/` and the rest of the game only uses its exported
+  functions, so it can be reworked on its own.
+
 **Other**
 - Diplomacy: send gifts to improve relations, or propose a three-year alliance.
 - Personnel: search for talent, recruit free officers and captives, and reward officers to keep them
@@ -142,6 +165,7 @@ src/engine/      pure game logic, no DOM — testable in Node
   economy.js     income, harvest, development, the month-end tick, events, aging
   commands.js    the province commands and free management actions
   ai.js          province planner shared by computer lords and delegated governors
+  politics/      temperaments, opinion and trust, homelands, what each house wants, espionage
   war.js         declaring war, applying battle results, captives
   battle.js      tactical hex battle engine and battle AI
   turn.js        monthly turn flow (random province order, waiting for the player)
@@ -153,9 +177,14 @@ tests/           node:test suites
 ## Roadmap ideas
 
 - More scenarios (194 Cao Cao in Yan province, 200 Guandu, 208 Red Cliffs, 220 Three Kingdoms)
-- Plots and espionage: sow discord, incite rebellion, spy on provinces
 - Fog of war on enemy province details
-- Joint attacks with allies, and reinforcements arriving mid-battle
+- A strategic layer: lords choose war goals, mass forces at the front and soften targets before
+  invading
+- Joint invasions as in RTK II: invite adjacent allies to join, paying them in gold. The lord leading
+  the invasion always takes the province; helpers keep only what they plunder. Defensive aid, and
+  coalitions that split when their members fall out
+- Reinforcements arriving mid-battle
+- More plots: sow discord, incite rebellion, false rumours
 - Officer traits and skills (e.g. naval, fire, cavalry mastery), and officers who grow with experience
 - River and naval battles on the Yangtze
 - Portraits and music

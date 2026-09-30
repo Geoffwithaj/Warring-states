@@ -9,6 +9,7 @@ import { ADJACENT, isAdjacent } from './map.js';
 import { createBattle, autoResolve } from './battle.js';
 import { tilesOf, TILE_VALUE } from './economy.js';
 import { handleRulerLoss, eliminateForce } from './succession.js';
+import { onAttack, onConquest, remember, isHomeland, traitOf } from './politics/index.js';
 
 export const MAX_ARMY = 10;
 
@@ -16,9 +17,12 @@ export function foodNeeded(troops) {
   return Math.ceil(troops / 3000) * 30 + 20;
 }
 
-function sideEntry(o) {
-  return { officer: o.id, troops: o.troops, training: o.training, unit: o.unit };
+function sideEntry(o, moraleBonus = 0) {
+  return { officer: o.id, troops: o.troops, training: o.training, unit: o.unit, moraleBonus };
 }
+
+// Men fight harder on their own soil.
+export const HOMELAND_MORALE = 8;
 
 function friendlyRefuge(state, fid, exclude) {
   const options = ADJACENT[exclude].filter((pid) => state.provinces[pid].owner === fid);
@@ -31,7 +35,6 @@ export function validateWar(state, { from, to, officerIds, food }) {
   const dst = state.provinces[to];
   if (!isAdjacent(from, to)) return 'That province is not adjacent.';
   if (dst.owner === src.owner) return 'You already hold that province.';
-  if (areAllied(state, src.owner, dst.owner)) return 'You are allied with that lord.';
   if (!officerIds.length) return 'Choose at least one officer.';
   if (officerIds.length > MAX_ARMY) return `At most ${MAX_ARMY} officers may march.`;
   const here = new Set(officersIn(state, from).map((o) => o.id));
@@ -52,10 +55,7 @@ export function declareWar(state, { from, to, officerIds, commanderId, food, int
   const fd = dst.owner;
   src.food -= food;
   const attackers = officerIds.map((id) => state.officers[id]);
-  if (fd) {
-    state.forces[fd].relations[fa] = clamp((state.forces[fd].relations[fa] ?? 50) - 25, 0, 100);
-    state.forces[fa].relations[fd] = clamp((state.forces[fa].relations[fd] ?? 50) - 10, 0, 100);
-  }
+  if (fd) onAttack(state, fa, fd, { raid: intent === 'raid' });
   const defenders = officersIn(state, to)
     .filter((o) => o.troops > 0)
     .sort((a, b) => strengthOf(b) - strengthOf(a))
@@ -77,8 +77,8 @@ export function declareWar(state, { from, to, officerIds, commanderId, food, int
     pid: to,
     from,
     walls: dst.walls,
-    att: { force: fa, officers: attackers.map(sideEntry), commander: commanderId || attackers[0].id, food },
-    def: { force: fd, officers: defenders.map(sideEntry), commander: defCmd.id, food: dst.food },
+    att: { force: fa, officers: attackers.map((o) => sideEntry(o)), commander: commanderId || attackers[0].id, food },
+    def: { force: fd, officers: defenders.map((o) => sideEntry(o, isHomeland(state, to, fd) ? HOMELAND_MORALE : 0)), commander: defCmd.id, food: dst.food },
     humanSides: { att: interactiveAttacker, def: humanDef },
     intent,
     farmTiles: tilesOf(dst, 'farm'),
@@ -116,6 +116,8 @@ function conquer(state, { fa, fd, to, movers, food, captives }) {
     }
   }
   dst.owner = fa;
+  if (fd) remember(state, fd, fa, 'conquered');
+  onConquest(state, to, fa);
   dst.delegate = null;
   dst.remit = 0;
   dst.order = clamp(dst.order - 10, 0, 100);
@@ -127,12 +129,12 @@ function conquer(state, { fa, fd, to, movers, food, captives }) {
   }
   const best = movers.reduce((a, b) => (!a || a.cha + a.int > b.cha + b.int ? a || b : b), null);
   dst.governor = best?.id ?? null;
-  const outcome = takeCaptives(state, fa, to, captives);
+  const outcome = imprison(state, fa, to, captives);
   if (fd && !provincesOf(state, fd).length) eliminateForce(state, fd);
   return outcome;
 }
 
-function takeCaptives(state, captor, pid, captives) {
+export function imprison(state, captor, pid, captives) {
   const held = [];
   for (const o of captives) {
     if (o.status === 'dead') continue;
@@ -229,7 +231,7 @@ export function finishBattle(state, b) {
     if (refuge) state.officers[u.officer].province = refuge;
   }
   for (const o of captives) o.province = b.pid;
-  const outcome = takeCaptives(state, fd, b.pid, captives);
+  const outcome = imprison(state, fd, b.pid, captives);
   return { winner, ...outcome };
 }
 
@@ -265,7 +267,7 @@ export function releaseCaptive(state, id) {
   if (prev?.alive && capitalOf(state, prev.id)) {
     enlist(state, o, prev.id, capitalOf(state, prev.id));
     o.troops = 0;
-    prev.relations[captor] = clamp((prev.relations[captor] ?? 50) + 8, 0, 100);
+    remember(state, prev.id, captor, 'released');
     log(state, `${forceName(state, captor)} releases ${o.name}, who returns to ${forceName(state, prev.id)}.`, 'info', [captor, prev.id]);
   } else {
     o.status = 'free';
@@ -283,7 +285,7 @@ export function executeCaptive(state, id) {
   o.status = 'dead';
   log(state, `${forceName(state, captor)} executes ${o.name}.`, 'warn', [captor]);
   if (prev) {
-    prev.relations[captor] = clamp((prev.relations[captor] ?? 50) - 30, 0, 100);
+    remember(state, prev.id, captor, 'executed', prev.ruler === o.id ? -50 : -30);
     if (prev.alive && prev.ruler === o.id) handleRulerLoss(state, prev.id);
   }
   o.prevForce = null;
@@ -293,7 +295,8 @@ function aiDecideCaptive(state, o) {
   if (recruitChance(state, o.force, o) > 0 && recruitCaptive(state, o.id)) return;
   const prev = o.prevForce && state.forces[o.prevForce];
   const isRuler = prev?.alive && prev.ruler === o.id;
-  const cruel = rulerOf(state, o.force).cha < 50;
+  // The vengeful and the faithless are quicker to the axe.
+  const cruel = traitOf(state, o.force, 'vengeance') >= 4 || traitOf(state, o.force, 'honour') <= 1;
   if ((isRuler && chance(state, cruel ? 0.7 : 0.35)) || (!isRuler && cruel && chance(state, 0.25))) executeCaptive(state, o.id);
   else releaseCaptive(state, o.id);
 }

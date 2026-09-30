@@ -285,3 +285,9 @@ body:not([data-view='split']) #log { display: none; }
   .battle-side .blog { max-height: 180px; flex: none; }
   .battle-result { width: calc(100% - 32px); }
 }
+
+/* Politics */
+ul.reasons, ul.intel { margin: 4px 0 2px; padding-left: 18px; }
+ul.reasons li { font-size: 13px; }
+ul.intel li { margin: 3px 0; }
+.intel-journal .section h3 { margin-bottom: 2px; }

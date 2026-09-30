@@ -7,6 +7,7 @@ import {
   troopCap, monthIndex, applyDebuts, enlist, usedThisMonth,
 } from './state.js';
 import { handleRulerLoss } from './succession.js';
+import { politicsMonthly } from './politics/index.js';
 
 // Farmland and Commerce are continuous values; every TILE_VALUE of them is one
 // developed field or market on the province's battlefield.
@@ -304,17 +305,7 @@ export function endOfMonth(state) {
   wander(state);
   drift(state);
 
-  // Alliances expire; relations slowly revert to neutral.
-  const now = monthIndex(state);
-  for (const f of Object.values(state.forces)) {
-    for (const [other, until] of Object.entries(f.alliances)) {
-      if (until <= now + 1) {
-        delete f.alliances[other];
-        if (f.id < other) log(state, `The alliance between ${forceName(state, f.id)} and ${forceName(state, other)} has lapsed.`, 'info', [f.id, other]);
-      }
-    }
-    for (const k of Object.keys(f.relations)) f.relations[k] += Math.sign(50 - f.relations[k]) * 0.5;
-  }
+  politicsMonthly(state);
 
   if (state.month === HARVEST_MONTH) log(state, 'The autumn harvest is gathered across the land.', 'info');
   state.month += 1;

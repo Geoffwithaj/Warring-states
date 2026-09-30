@@ -440,3 +440,11 @@ test('attackers withdraw freely from their own edge; a routed commander scatters
   assert.equal(other.troops, 1800);
   assert.equal(other.loot, 0);
 });
+
+test('an army of one still storms the castle rather than waiting out the month', () => {
+  const state = createGame({ seed: 7 });
+  const b = siege(state, { walls: 40, attTroops: 9000, defTroops: 200 });
+  autoResolve(state, b);
+  assert.equal(b.result.winner, 'att', b.result.reason);
+  assert.ok(b.day < 30);
+});

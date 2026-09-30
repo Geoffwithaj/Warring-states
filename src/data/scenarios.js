@@ -9,6 +9,12 @@ export const SCENARIOS = [
     month: 1,
     blurb:
       'Dong Zhuo holds the Emperor in Luoyang. Across the realm, lords raise armies in the name of the Han — and in their own.',
+    // The coalition of 190, bound by a common enemy, and old enmities.
+    bonds: {
+      coalition: ['Yuan Shao', 'Yuan Shu', 'Han Fu', 'Kong Rong', 'Liu Dai', 'Cao Cao', 'Sun Jian', 'Gongsun Zan', 'Ma Teng', 'Tao Qian', 'Liu Bei'],
+      against: 'Dong Zhuo',
+      rivalries: [['Yuan Shao', 'Yuan Shu'], ['Gongsun Zan', 'Liu Yu']],
+    },
     forces: [
       {
         ruler: 'Dong Zhuo', color: '#6b3fa0',

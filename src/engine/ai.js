@@ -4,12 +4,13 @@
 import { chance, pick } from './rng.js';
 import {
   officersIn, idleOfficersIn, usedThisMonth, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
-  capitalOf, rulerOf, troopCap, monthIndex,
+  capitalOf, troopCap, monthIndex,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
 import { DEV_FIELDS, fieldMax, tilesOf, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
 import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
+import { traitOf, traitScale, opinionOf, inTruce, isHomeland } from './politics/index.js';
 
 export const DIRECTIVES = {
   balanced: { label: 'Balanced', desc: 'Develop steadily, keep a sound garrison, take only easy prey.', attackRatio: 1.7, claim: true },
@@ -19,10 +20,18 @@ export const DIRECTIVES = {
   expand: { label: 'Expand', desc: 'Build up and attack weaker neighbours when the odds are good.', attackRatio: 1.3, claim: true },
 };
 
+// Would this lord make war on that one? Allies and lords under truce are
+// safe unless the lord is faithless and has come to hate them.
+function wouldAttack(state, fid, other) {
+  if (areAllied(state, fid, other)) return traitOf(state, fid, 'honour') <= 1 && opinionOf(state, fid, other) < 30;
+  if (inTruce(state, fid, other)) return traitOf(state, fid, 'honour') <= 2 && opinionOf(state, fid, other) < 40;
+  return true;
+}
+
 function hostileNeighbors(state, pid, fid) {
   return ADJACENT[pid].filter((n) => {
     const owner = state.provinces[n].owner;
-    return owner && owner !== fid && !areAllied(state, fid, owner);
+    return owner && owner !== fid && wouldAttack(state, fid, owner);
   });
 }
 
@@ -79,14 +88,19 @@ function planAttack(state, pid, fid, directive) {
   if (p.food < food + foodUpkeep(state, pid) * 2) return null;
 
   let best = null;
+  // Bold lords accept worse odds.
+  const ratio = d.attackRatio * traitScale(state, fid, 'boldness', -0.06);
   for (const t of hostile) {
     const defStr = provinceStrength(state, t);
     // Cavalry can neither breach walls nor storm a castle.
     const walled = state.provinces[t].walls > 30;
     const usable = walled ? army.reduce((sum, o) => sum + strengthOf(o) * (o.unit === 'cav' ? 0.5 : 1), 0) : armyStr;
-    if (usable < defStr * d.attackRatio) continue;
+    // A lost homeland is worth a costly fight.
+    const home = isHomeland(state, t, fid);
+    if (usable < defStr * ratio * (home ? 0.75 : 1)) continue;
     const prov = state.provinces[t];
-    const value = (prov.pop / 1000 + prov.farm + prov.commerce) / (defStr / 1000 + 5);
+    const hatred = 1 + (50 - opinionOf(state, fid, prov.owner)) / 100;
+    const value = ((prov.pop / 1000 + prov.farm + prov.commerce) / (defStr / 1000 + 5)) * hatred * (home ? 3 : 1);
     if (!best || value > best.value) best = { t, value };
   }
   if (!best) return planRaid(state, pid, fid, hostile);
@@ -102,7 +116,7 @@ function planRaid(state, pid, fid, hostile) {
   const now = monthIndex(state);
   // A lord mounts a raid at most every half year, mostly before the harvest.
   if (now - (force.lastRaid ?? -99) < 6) return null;
-  if (!chance(state, beforeHarvest ? 0.15 : 0.03)) return null;
+  if (!chance(state, (beforeHarvest ? 0.15 : 0.03) * traitScale(state, fid, 'guile', 0.3))) return null;
   const here = officersIn(state, pid);
   if (here.length < 3) return null;
   const gov = governorOf(state, pid);
@@ -139,7 +153,8 @@ function planDraft(state, pid, fid, directive, frontier) {
   const threat = Math.max(0, ...hostileNeighbors(state, pid, fid).map((n) => provinceStrength(state, n)));
   const troops = officersIn(state, pid).reduce((s, o) => s + o.troops, 0);
   const want = directive === 'military' || directive === 'defend' || directive === 'expand';
-  const need = frontier ? mine < threat * (want ? 1.5 : 1.1) || troops < 6000 : troops < 3000;
+  const home = isHomeland(state, pid, fid) ? 1.2 : 1;
+  const need = frontier ? mine < threat * (want ? 1.5 : 1.1) * home || troops < 6000 : troops < 3000;
   if (!need && !(want && chance(state, 0.5))) return null;
   if (p.order < 30) return null;
   const o = bestBy(here, (x) => (troopCap(x) - x.troops) * (x.war / 100));
@@ -221,7 +236,7 @@ function planReinforce(state, pid, fid) {
 }
 
 function planDiplomacy(state, pid, fid) {
-  if (capitalOf(state, fid) !== pid || !chance(state, 0.05)) return null;
+  if (capitalOf(state, fid) !== pid || !chance(state, 0.15)) return null;
   const p = state.provinces[pid];
   const envoy = bestBy(idleOfficersIn(state, pid), (o) => o.cha + o.int);
   const neighbors = new Set();
@@ -233,18 +248,19 @@ function planDiplomacy(state, pid, fid) {
     }
   }
   if (!neighbors.size) return null;
-  const target = pick(state, [...neighbors]);
-  if (allianceChance(state, envoy, target) > 0.35) return { type: 'alliance', args: { officer: envoy.id, target } };
-  if (p.gold > 700) return { type: 'gift', args: { officer: envoy.id, target, gold: 150 } };
+  // Court the neighbour it likes best; the ambitious court less.
+  const target = [...neighbors].sort((a, b) => opinionOf(state, fid, b) - opinionOf(state, fid, a))[0];
+  if (opinionOf(state, fid, target) < 40 || (traitOf(state, fid, 'ambition') >= 5 && chance(state, 0.5))) return null;
+  if (allianceChance(state, envoy, target) > 0.3) return { type: 'alliance', args: { officer: envoy.id, target } };
+  if (p.gold > 450) return { type: 'gift', args: { officer: envoy.id, target, gold: 150 } };
   return null;
 }
 
 // Computer lords pick a directive per province from their temperament.
 export function aiDirective(state, pid, fid) {
-  const ruler = rulerOf(state, fid);
   const hostile = hostileNeighbors(state, pid, fid);
   if (!hostile.length) return 'balanced';
-  const aggression = (ruler.war + (100 - ruler.int) / 2) / 150;
+  const aggression = (traitOf(state, fid, 'ambition') + traitOf(state, fid, 'boldness')) / 10;
   const mine = provinceStrength(state, pid);
   const threat = Math.max(...hostile.map((n) => provinceStrength(state, n)));
   if (mine < threat * 0.8) return 'defend';

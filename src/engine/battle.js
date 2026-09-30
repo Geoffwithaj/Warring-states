@@ -385,7 +385,7 @@ function makeUnit(id, side, o, spot, commander) {
     startTroops: o.troops,
     training: o.training,
     type: o.unit,
-    morale: clamp(55 + Math.round(o.training / 3), 0, 100),
+    morale: clamp(55 + Math.round(o.training / 3) + (o.moraleBonus || 0), 0, 100),
     c: spot.c,
     r: spot.r,
     moved: false,
@@ -1192,8 +1192,10 @@ function positionScore(state, b, u, node, goal, field) {
   // Attackers are drawn to developed land they can burn; defenders to land they must protect.
   const site = siteAt(b, node.c, node.r);
   if (site && !site.razed) s -= u.side === 'att' && !u.commander ? 6 : 3;
-  // The attacking commander stays out of the garrison's reach until the castle is open.
-  if (u.side === 'att' && u.commander && !(isBreached(b) && !castleOccupant(b))) {
+  // The attacking commander stays out of the garrison's reach until the castle
+  // is open, unless nobody else can storm it.
+  const others = activeUnits(b, 'att').some((x) => x !== u && x.type !== 'cav');
+  if (u.side === 'att' && u.commander && others && !(isBreached(b) && !castleOccupant(b))) {
     const d = hexDist(node, b.castle);
     if (d <= GARRISON_RANGE) s += 60;
   }

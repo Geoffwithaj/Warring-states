@@ -1,6 +1,7 @@
 // What happens when a ruler dies, is executed, or a force loses its last province.
 
 import { officersOf, provincesOf, forceName, log, isFamily, officerList } from './state.js';
+import { onFall } from './politics/index.js';
 
 export function handleRulerLoss(state, fid) {
   const f = state.forces[fid];
@@ -20,7 +21,7 @@ export function handleRulerLoss(state, fid) {
   for (const o of heirs) {
     if (o.id !== heir.id && !isFamily(o, heir)) o.loyalty = Math.max(0, o.loyalty - 10);
   }
-  log(state, `${heir.name} succeeds ${oldName} as lord.`, 'major', [fid]);
+  log(state, `${heir.name} succeeds ${oldName} as lord, and carries on the house's designs.`, 'major', [fid]);
 }
 
 export function eliminateForce(state, fid) {
@@ -45,5 +46,6 @@ export function eliminateForce(state, fid) {
   for (const other of Object.values(state.forces)) {
     delete other.alliances[fid];
   }
+  onFall(state, fid);
   log(state, `The house of ${forceName(state, fid)} has fallen.`, 'major');
 }

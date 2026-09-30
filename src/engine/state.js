@@ -4,6 +4,7 @@ import { PROVINCES } from '../data/provinces.js';
 import { OFFICERS, FAMILIES, officerId } from '../data/officers.js';
 import { SCENARIOS, FREE_SCHEDULES, parseSchedule, RTK2_AUTO_JOIN, resolveAlias } from '../data/scenarios.js';
 import { clamp, randInt, rand } from './rng.js';
+import { initPolitics } from './politics/index.js';
 
 export const MONTH_NAMES = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th', '11th', '12th'];
 export const SEASONS = ['Winter', 'Spring', 'Spring', 'Spring', 'Summer', 'Summer', 'Summer', 'Autumn', 'Autumn', 'Autumn', 'Winter', 'Winter'];
@@ -25,7 +26,7 @@ export function unitTypeFor(officer, province) {
 export const troopCap = (o) => 3000 + o.war * 120;
 
 // Saves from an older version of the rules are not loaded.
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 // Starting development as a share of a province's potential (25 Farmland per
 // fertile tile, 60 Commerce per market site).
@@ -99,7 +100,6 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
       color: f.color,
       human: humanRulers.includes(fid),
       alive: true,
-      relations: {},
       alliances: {},
     };
     for (const [pid, names] of Object.entries(f.provinces)) {
@@ -142,9 +142,7 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
     o.debut = year;
     o.heirOf = heirOf[o.id] ?? null;
   }
-  for (const a of Object.keys(state.forces)) {
-    for (const b of Object.keys(state.forces)) if (a !== b) state.forces[a].relations[b] = 50;
-  }
+  initPolitics(state, sc);
   applyDebuts(state);
   return state;
 }
