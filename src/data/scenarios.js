@@ -142,6 +142,7 @@ export const SCENARIOS = [
       ['Kan Ze', 'kuaiji', 200], ['Bu Zhi', 'xiapi', 200], ['Hua Xin', 'yuzhang', 195],
       ['Jiang Ji', 'shouchun', 200], ['Deng Ai', 'wan', 225], ['Wutugu', 'zangke', 215],
       ['Bao Long', 'guiyang', 190], ['Sun Shangxiang', 'changsha', 205], ['Yuan Shang', 'nanpi', 196],
+      ['Chen Dao', 'pingyuan', 195], ['Ma Zhong', 'jianning', 210],
     ],
     extraHeirs: [['Sun Jian', 'Sun Shangxiang'], ['Yuan Shao', 'Yuan Shang']],
     freeSchedule: 'rtk2-1',
