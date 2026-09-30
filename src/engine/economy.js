@@ -1,12 +1,27 @@
 // Province economy: income, harvest, development, and the month-end tick.
 
 import { clamp, chance, randInt, rand, pick } from './rng.js';
-import { ADJACENT } from './map.js';
+import { ADJACENT, PROVINCE_BY_ID } from './map.js';
 import {
   officersIn, provincesOf, capitalOf, log, age, officerList, forceName, isFamily, governorOf,
   troopCap, monthIndex, applyDebuts, enlist, usedThisMonth,
 } from './state.js';
 import { handleRulerLoss } from './succession.js';
+
+// Farmland and Commerce are continuous values; every TILE_VALUE of them is one
+// developed field or market on the province's battlefield.
+export const TILE_VALUE = { farm: 25, commerce: 60 };
+
+// Each province's cap comes from its geography; dikes and walls cap at 100.
+export function fieldMax(p, field) {
+  const meta = PROVINCE_BY_ID[p.id];
+  if (field === 'farm') return meta.fertile * TILE_VALUE.farm;
+  if (field === 'commerce') return meta.markets * TILE_VALUE.commerce;
+  return DEV_FIELDS[field].max;
+}
+
+export const tilesOf = (p, field) => Math.floor(p[field] / TILE_VALUE[field]);
+export const tileCapacity = (p, field) => (field === 'farm' ? PROVINCE_BY_ID[p.id].fertile : PROVINCE_BY_ID[p.id].markets);
 
 export const TAX = {
   light: { mult: 0.75, order: 1.2, label: 'Light' },
@@ -16,8 +31,8 @@ export const TAX = {
 
 export const HARVEST_MONTH = 7;
 export const DEV_FIELDS = {
-  farm: { label: 'Farmland', stat: 'int', max: 999, rate: 0.2 },
-  commerce: { label: 'Commerce', stat: 'int', max: 999, rate: 0.2 },
+  farm: { label: 'Farmland', stat: 'int', rate: 0.2 },
+  commerce: { label: 'Commerce', stat: 'int', rate: 0.2 },
   flood: { label: 'Flood control', stat: 'int', max: 100, rate: 0.1 },
   walls: { label: 'Walls', stat: 'war', max: 100, rate: 0.07 },
 };
@@ -62,7 +77,7 @@ export const skill = (o, stat) => 0.5 + o[stat] / 100;
 
 export function devGain(p, field, o, gold) {
   const f = DEV_FIELDS[field];
-  const diminish = 1 - p[field] / (f.max * 1.1);
+  const diminish = 1 - p[field] / (fieldMax(p, field) * 1.1);
   return Math.max(0, Math.round(gold * f.rate * skill(o, f.stat) * diminish));
 }
 
@@ -112,9 +127,10 @@ function applyTasks(state, p, income) {
         const f = DEV_FIELDS[o.task];
         const spend = Math.min(share, p.gold);
         p.gold -= spend;
-        const labour = Math.max(1, Math.round(skill(o, f.stat) * (f.max > 100 ? 1.5 : 0.6)));
-        const gain = devGain(p, o.task, o, spend) + (p[o.task] < f.max ? labour : 0);
-        p[o.task] = clamp(p[o.task] + gain, 0, f.max);
+        const max = fieldMax(p, o.task);
+        const labour = Math.max(1, Math.round(skill(o, f.stat) * (TILE_VALUE[o.task] ? 1.5 : 0.6)));
+        const gain = devGain(p, o.task, o, spend) + (p[o.task] < max ? labour : 0);
+        p[o.task] = clamp(p[o.task] + gain, 0, max);
         break;
       }
       case 'order':

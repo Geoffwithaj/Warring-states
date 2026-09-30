@@ -7,7 +7,7 @@ import {
   troopCap,
 } from '../engine/state.js';
 import { ADJACENT } from '../engine/map.js';
-import { DEV_FIELDS, devGain, reliefGain, trainGain, maxDraft, draftCost, drillCapacity, drillEffect } from '../engine/economy.js';
+import { DEV_FIELDS, TILE_VALUE, fieldMax, devGain, reliefGain, trainGain, maxDraft, draftCost, drillCapacity, drillEffect } from '../engine/economy.js';
 import { UNIT_TYPES } from '../engine/battle.js';
 import {
   searchChance, freeRecruitChance, captiveRecruitChance, allianceChance, transferTroops,
@@ -71,7 +71,12 @@ export function openDevelop(ctx) {
     } else {
       const g = devGain(p, form.field, o, form.gold);
       const f = DEV_FIELDS[form.field];
-      box.textContent = `${f.label} ${p[form.field]} → ${Math.min(f.max, p[form.field] + g)} (+${g})`;
+      const max = fieldMax(p, form.field);
+      const after = Math.min(max, p[form.field] + g);
+      const tiles = TILE_VALUE[form.field]
+        ? ` — ${Math.floor(p[form.field] / TILE_VALUE[form.field])} → ${Math.floor(after / TILE_VALUE[form.field])} of ${Math.floor(max / TILE_VALUE[form.field])} ${form.field === 'farm' ? 'fields' : 'markets'}`
+        : '';
+      box.textContent = `${f.label} ${p[form.field]} → ${after} (+${g})${tiles}`;
     }
   };
   render();

@@ -10,7 +10,7 @@ import { SCENARIOS } from '../data/scenarios.js';
 import { officerId } from '../data/officers.js';
 import {
   createGame, dateLabel, SEASONS, forceName, provincesOf, officersOf, capitalOf, areAllied, monthIndex,
-  officerList, log,
+  officerList, log, SAVE_VERSION,
 } from '../engine/state.js';
 import { newGameStart, step, playerCommand, governorTakesTurn, concludeBattle } from '../engine/turn.js';
 import { recruitChance, recruitCaptive, releaseCaptive, executeCaptive } from '../engine/war.js';
@@ -53,7 +53,9 @@ function saveTo(key) {
 function loadFrom(key) {
   try {
     const raw = storage()?.getItem(key);
-    return raw ? JSON.parse(raw) : null;
+    const saved = raw ? JSON.parse(raw) : null;
+    // Saves made under older rules are set aside rather than migrated.
+    return saved && saved.state?.version === SAVE_VERSION ? saved : null;
   } catch {
     return null;
   }

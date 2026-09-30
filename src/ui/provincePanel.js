@@ -4,7 +4,7 @@ import { h, fmt, bar, select } from './dom.js';
 import {
   officersIn, idleOfficersIn, usedThisMonth, captivesIn, freeOfficersIn, forceName, governorOf, troopsIn, capitalOf, age, areAllied,
 } from '../engine/state.js';
-import { TAX, TASKS, FUNDED_TASKS, BUDGET_LEVELS, taskBudgetShare, monthlyGold, harvestFood, foodUpkeep, HARVEST_MONTH, popCap } from '../engine/economy.js';
+import { TAX, TASKS, FUNDED_TASKS, TILE_VALUE, fieldMax, tilesOf, tileCapacity, BUDGET_LEVELS, taskBudgetShare, monthlyGold, harvestFood, foodUpkeep, HARVEST_MONTH, popCap } from '../engine/economy.js';
 import { DIRECTIVES } from '../engine/ai.js';
 import { UNIT_TYPES } from '../engine/battle.js';
 import { setTax, setRemit, setTask, setDelegate, setGovernor, setTaskBudget } from '../engine/commands.js';
@@ -74,8 +74,8 @@ export function renderProvincePanel(el, ctx) {
       stat('Gold', fmt(p.gold)),
       stat('Food', fmt(p.food)),
       stat('People', fmt(p.pop)),
-      statBar('Farmland', p.farm, 999, '#9cc46a'),
-      statBar('Commerce', p.commerce, 999, '#d9b25f'),
+      tileBar('Farmland', p, 'farm', '#9cc46a'),
+      tileBar('Commerce', p, 'commerce', '#d9b25f'),
       statBar('Order', p.order, 100, p.order < 35 ? '#e0705f' : '#8fb4e8'),
       statBar('Flood ctl', p.flood, 100, '#5b8fc9'),
       statBar('Walls', p.walls, 100, '#a89a80'),
@@ -102,6 +102,17 @@ export function renderProvincePanel(el, ctx) {
     el.append(h('div', { class: 'section' }, h('h3', {}, 'Known free officers'),
       known.map((o) => h('div', {}, `${o.name} `, h('span', { class: 'muted' }, `INT ${o.int} WAR ${o.war} CHA ${o.cha}`)))));
   }
+}
+
+// Farmland and Commerce shown as developed tiles out of the province's potential.
+function tileBar(label, p, field, color) {
+  const tiles = tilesOf(p, field);
+  const cap = tileCapacity(p, field);
+  const part = Math.round(((p[field] % TILE_VALUE[field]) / TILE_VALUE[field]) * 100);
+  const unit = field === 'farm' ? 'fields' : 'markets';
+  return h('div', { title: `${fmt(p[field])} of ${fmt(fieldMax(p, field))} · ${tiles < cap ? `${part}% toward the next` : 'fully developed'}` },
+    stat(label, `${tiles}/${cap}`, h('span', { class: 'muted', style: { fontSize: '11px' } }, ` ${unit}`)),
+    bar(p[field], fieldMax(p, field), color));
 }
 
 function statBar(label, v, max, color) {

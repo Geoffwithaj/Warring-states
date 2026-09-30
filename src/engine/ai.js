@@ -7,7 +7,7 @@ import {
   capitalOf, rulerOf, troopCap,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
-import { DEV_FIELDS, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
+import { DEV_FIELDS, fieldMax, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
 import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
 
@@ -134,10 +134,10 @@ function planDevelop(state, pid, directive, frontier) {
   let field;
   if ((directive === 'defend' || directive === 'military' || frontier) && p.walls < 70 && chance(state, 0.5)) field = 'walls';
   else if (p.flood < 50 && isRiver(pid) && chance(state, 0.5)) field = 'flood';
-  else if (harvestFood(p) < foodUpkeep(state, pid) * 14 || p.farm / DEV_FIELDS.farm.max < p.commerce / DEV_FIELDS.commerce.max) field = 'farm';
+  else if (harvestFood(p) < foodUpkeep(state, pid) * 14 || p.farm / fieldMax(p, 'farm') < p.commerce / fieldMax(p, 'commerce')) field = 'farm';
   else field = 'commerce';
-  if (p[field] >= DEV_FIELDS[field].max) field = field === 'farm' ? 'commerce' : 'farm';
-  if (p[field] >= DEV_FIELDS[field].max) return null;
+  if (p[field] >= fieldMax(p, field)) field = field === 'farm' ? 'commerce' : 'farm';
+  if (p[field] >= fieldMax(p, field)) return null;
   const stat = DEV_FIELDS[field].stat;
   const o = bestBy(here, (x) => x[stat]);
   return { type: 'develop', args: { field, officer: o.id, gold: Math.floor(budget) } };

@@ -24,10 +24,18 @@ export function unitTypeFor(officer, province) {
 
 export const troopCap = (o) => 3000 + o.war * 120;
 
+// Saves from an older version of the rules are not loaded.
+export const SAVE_VERSION = 2;
+
+// Starting development as a share of a province's potential (25 Farmland per
+// fertile tile, 60 Commerce per market site).
+const startFarm = (state, p, lo, hi) => Math.round(p.fertile * 25 * (lo + (hi - lo) * rand(state)));
+const startCommerce = (state, p, lo, hi) => Math.round(p.markets * 60 * (lo + (hi - lo) * rand(state)));
+
 export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], seed = Date.now() % 2147483647 } = {}) {
   const sc = SCENARIOS.find((s) => s.id === scenarioId);
   const state = {
-    version: 1,
+    version: SAVE_VERSION,
     scenario: sc.id,
     year: sc.year,
     month: sc.month,
@@ -63,7 +71,6 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
   }
 
   for (const p of PROVINCES) {
-    const k = p.pop / 1000;
     state.provinces[p.id] = {
       id: p.id,
       name: p.name,
@@ -72,8 +79,8 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
       gold: 80 + randInt(state, 0, 80),
       food: 800 + randInt(state, 0, 800),
       pop: p.pop,
-      farm: Math.round(k * 0.55 + randInt(state, 20, 90)),
-      commerce: Math.round(k * 0.45 + randInt(state, 20, 90)),
+      farm: startFarm(state, p, 0.2, 0.4),
+      commerce: startCommerce(state, p, 0.15, 0.35),
       flood: randInt(state, 25, 55),
       walls: randInt(state, 20, 50),
       order: randInt(state, 45, 65),
@@ -103,6 +110,9 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
       prov.gold = (isCapital ? 700 : 400) + randInt(state, 0, 300);
       prov.food = (isCapital ? 7000 : 4000) + randInt(state, 0, 3000);
       prov.walls = clamp(prov.walls + (isCapital ? 25 : 10), 0, 100);
+      const meta = PROVINCES.find((q) => q.id === pid);
+      prov.farm = startFarm(state, meta, isCapital ? 0.45 : 0.35, isCapital ? 0.65 : 0.55);
+      prov.commerce = startCommerce(state, meta, isCapital ? 0.4 : 0.3, isCapital ? 0.6 : 0.5);
       for (const name of names) {
         const o = state.officers[officerId(name)];
         if (!o) throw new Error(`Unknown officer ${name}`);

@@ -61,7 +61,7 @@ test('invalid commands are rejected without consuming the turn', () => {
 
 test('development has diminishing returns', () => {
   const o = { int: 80 };
-  assert.ok(devGain({ farm: 100 }, 'farm', o, 100) > devGain({ farm: 900 }, 'farm', o, 100));
+  assert.ok(devGain({ id: 'chenliu', farm: 100 }, 'farm', o, 100) > devGain({ id: 'chenliu', farm: 900 }, 'farm', o, 100));
 });
 
 test('a player attack produces an interactive battle that can be concluded', () => {

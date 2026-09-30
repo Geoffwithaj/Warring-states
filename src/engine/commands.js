@@ -9,7 +9,7 @@ import {
 } from './state.js';
 import { isAdjacent, PROVINCE_BY_ID } from './map.js';
 import {
-  DEV_FIELDS, TAX, TASKS, devGain, reliefGain, trainGain, draftCost, maxDraft, skill,
+  DEV_FIELDS, TAX, TASKS, fieldMax, devGain, reliefGain, trainGain, draftCost, maxDraft, skill,
 } from './economy.js';
 import { declareWar, validateWar, recruitChance, recruitCaptive } from './war.js';
 
@@ -45,7 +45,7 @@ export const COMMANDS = {
     if (gold <= 0 || gold > p.gold) return fail('Not enough gold.');
     const gain = devGain(p, field, o, gold);
     p.gold -= gold;
-    p[field] = clamp(p[field] + gain, 0, DEV_FIELDS[field].max);
+    p[field] = clamp(p[field] + gain, 0, fieldMax(p, field));
     return ok(`${o.name} invests ${gold} gold in ${DEV_FIELDS[field].label.toLowerCase()}: +${gain}.`);
   },
 

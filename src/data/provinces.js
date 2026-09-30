@@ -65,9 +65,28 @@ const RAW = [
   ['jiaozhi', 'Jiaozhi', 105.8, 21.0, 220, 'forest', 'r'],
 ];
 
+// Economic potential: [fertile tiles, market sites] on each province's land.
+// Every fertile tile is worth 25 Farmland and every market site 60 Commerce,
+// so these set each province's development caps. Judged from geography and
+// history: the Central Plains granaries, the Chengdu basin, the river and
+// coastal ports, the Silk Road towns of Liangzhou.
+export const POTENTIAL = {
+  ye: [38, 12], chenliu: [38, 11], chengdu: [38, 14], xuchang: [36, 12], runan: [36, 9],
+  nanpi: [34, 8], pingyuan: [34, 7], puyang: [34, 8], wan: [34, 12], changan: [30, 15],
+  xiaopei: [30, 8], shouchun: [30, 10], jiangling: [30, 13], luoyang: [28, 16], xiapi: [28, 12],
+  xiangyang: [28, 14], wu: [28, 15], beihai: [26, 10], langye: [24, 9], changsha: [24, 9],
+  jianye: [22, 12], kuaiji: [22, 12], jiaozhi: [22, 12], ji: [22, 9], lujiang: [22, 8],
+  hanzhong: [20, 7], jiangxia: [20, 11], yuzhang: [20, 7], jinyang: [18, 7], jiangzhou: [18, 9],
+  nanhai: [18, 13], beiping: [16, 6], chaisang: [16, 9], hongnong: [14, 7], wuling: [14, 5],
+  lingling: [14, 5], xiangping: [12, 5], shangdang: [12, 5], tianshui: [12, 5], cangwu: [12, 6],
+  wuwei: [10, 10], anding: [10, 4], zitong: [10, 4], jianning: [10, 4], yunnan: [10, 4],
+  guiyang: [10, 4], xiliang: [8, 7], dai: [8, 4], yongan: [8, 5], jianan: [8, 5], zangke: [6, 3],
+};
+
 export const PROVINCES = RAW.map(([id, name, lon, lat, pop, terrain, flags]) => {
   const [x, y] = projectLonLat(lon, lat);
-  return { id, name, x, y, pop: pop * 1000, terrain, river: flags.includes('r'), horses: flags.includes('h') };
+  const [fertile, markets] = POTENTIAL[id];
+  return { id, name, x, y, pop: pop * 1000, terrain, river: flags.includes('r'), horses: flags.includes('h'), fertile, markets };
 });
 
 // Rough outline of Han China (lon/lat), used to clip province regions.
