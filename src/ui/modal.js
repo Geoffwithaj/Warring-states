@@ -45,3 +45,7 @@ export function alertModal(title, message) {
 export function confirmModal(title, message, onYes, yesLabel = 'Yes') {
   return openModal({ title, body: h('p', {}, message), actions: [{ label: 'Cancel' }, { label: yesLabel, primary: true, onClick: onYes }] });
 }
+
+export function closeAllModals() {
+  clear(root());
+}

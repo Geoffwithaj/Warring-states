@@ -105,8 +105,10 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   Strong walls also shelter the garrison from arrows and blows. Infantry (and, weakly, archers) can
   assault the walls; the castle can only be entered once the walls are breached (down to half) and it
   is empty. An occupied castle holds even with ruined walls. Wall damage stays with the province.
-- **Duels**: refusing a challenge costs the refusing unit and the whole army morale; refuse twice and
-  that unit loses heart for a day. When challenged, you choose whether to accept, seeing the odds.
+- **Duels**: War decides them steeply — close matches are risky, a wide gap rarely loses. Refusing a
+  challenge in the open costs the refusing unit and the whole army morale (never below 20); refuse
+  twice and that unit loses heart for a day. A unit holding the castle may ignore challenges without
+  shame. When challenged, you choose whether to accept, seeing the odds.
 - Your turn ends by itself when no unit has anything left to do; press End turn to finish early.
 - Morale, training, fire that spreads with the wind (put out by rain), supplies for a 30-day
   campaign. Win by taking the castle, routing the enemy commander, or destroying the enemy army.
@@ -161,7 +163,8 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 - Diplomacy: send gifts to improve relations, or propose a three-year alliance.
 - Personnel: search for talent, recruit free officers and captives, and reward officers to keep them
   loyal.
-- Autosave, three save slots, a realm overview, and an officer roster.
+- Autosave, three save slots, and save files you can export and import (to keep a game, move it to
+  another device, or share it); a realm overview and an officer roster.
 
 ## Code layout
 

@@ -214,7 +214,9 @@ export function openBattleView(state, { onFinish }) {
       body: h('div', {},
         h('p', {}, `${a.name} (WAR ${a.war}) rides forward and challenges ${d.name} (WAR ${d.war}) to single combat.`),
         h('div', { class: 'preview' }, `${d.name} wins about ${pct(win)} of such duels. The loser's unit is broken, and they may be captured or slain.`),
-        h('p', { class: 'hint' }, `Refusing costs ${d.name}'s unit 15 morale and every other unit 5, and heartens the challenger. Refuse twice and the unit loses heart for a day.`)),
+        h('p', { class: 'hint' }, isCastle(b, target.c, target.r)
+          ? `${d.name} holds the castle and may ignore the challenge without shame.`
+          : `Refusing costs ${d.name}'s unit 15 morale and every other unit 5 (never below 20), and heartens the challenger. Refuse twice and the unit loses heart for a day.`)),
       actions: [
         { label: 'Refuse', onClick: () => answer(false) },
         { label: `Accept (${pct(win)})`, primary: true, onClick: () => answer(true) },
@@ -396,7 +398,7 @@ export function openBattleView(state, { onFinish }) {
       }
       if (sel && u.side !== sel.side) {
         if (ui.mode === 'duel' && duelTargets(b, sel).includes(u)) {
-          rows.push(h('div', { class: 'preview-line' }, `Duel: ${oName(sel)} wins ~${pct(duelWinChance(state, sel, u))}; ${o.name} accepts ~${pct(duelAcceptChance(state, sel, u))} of the time.`));
+          rows.push(h('div', { class: 'preview-line' }, `Duel: ${oName(sel)} wins ~${pct(duelWinChance(state, sel, u))}; ${o.name} accepts ~${pct(duelAcceptChance(state, b, sel, u))} of the time.`));
         } else if (ui.mode === 'charge' && chargeTargets(b, sel).includes(u)) {
           const p = previewCharge(state, b, sel, u);
           rows.push(h('div', { class: 'preview-line' }, `Charge: ~${fmt(p.dmg)} dealt, ~${fmt(p.counter)} taken; rides through to the far side.`));

@@ -1,7 +1,7 @@
 // Application shell: title screen, main game screen and turn flow.
 
 import { h, fmt, clear } from './dom.js';
-import { openModal, confirmModal } from './modal.js';
+import { openModal, confirmModal, closeAllModals } from './modal.js';
 import { createMapView, provinceTooltip } from './mapView.js';
 import { renderProvincePanel, officerDetail } from './provincePanel.js';
 import { openCommandDialog } from './commandDialogs.js';
@@ -62,6 +62,41 @@ function loadFrom(key) {
   }
 }
 
+// Save files: download a game to share or keep, and load one back.
+function exportSave(saved) {
+  const name = `warring-states-${(saved.meta.lord || 'game').replace(/\W+/g, '-').toLowerCase()}-${saved.state.year}-${saved.state.month}.json`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(saved)], { type: 'application/json' }));
+  const a = h('a', { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function currentSave() {
+  return { meta: { date: dateLabel(state), lord: viewer ? forceName(state, viewer) : '', savedAt: new Date().toLocaleString() }, state };
+}
+
+function importSave() {
+  const input = h('input', { type: 'file', accept: '.json,application/json', style: { display: 'none' } });
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    input.remove();
+    if (!file) return;
+    try {
+      const saved = JSON.parse(await file.text());
+      if (!saved?.state?.provinces) throw new Error('not a save');
+      if (saved.state.version !== SAVE_VERSION) return toast('That save was made under older rules and cannot be loaded.');
+      closeAllModals();
+      resume(saved.state);
+    } catch {
+      toast('That file is not a Warring States save.');
+    }
+  });
+  document.body.append(input);
+  input.click();
+}
+
 // ---- Title screen ------------------------------------------------------------
 
 export function showTitle() {
@@ -90,9 +125,14 @@ export function showTitle() {
   app.append(h('div', { class: 'title-screen' },
     h('h1', {}, 'WARRING STATES'),
     h('div', { class: 'sub' }, 'An homage to Romance of the Three Kingdoms II'),
-    saves.length ? h('div', { class: 'title-card' }, h('h2', {}, 'Continue'),
-      h('div', { class: 'row', style: { marginTop: '8px' } }, saves.map(([k, v]) =>
-        h('button', { onclick: () => resume(v.state) }, `${k === 'auto' ? 'Autosave' : `Slot ${k}`}: ${v.meta.lord} — ${v.meta.date}`)))) : null,
+    h('div', { class: 'title-card' }, h('h2', {}, 'Continue'),
+      saves.length ? h('div', { class: 'row', style: { marginTop: '8px', flexWrap: 'wrap' } }, saves.map(([k, v]) =>
+        h('span', { class: 'row' },
+          h('button', { onclick: () => resume(v.state) }, `${k === 'auto' ? 'Autosave' : `Slot ${k}`}: ${v.meta.lord} — ${v.meta.date}`),
+          h('button', { class: 'small', title: 'Download this save as a file', onclick: () => exportSave(v) }, 'Export')))) : null,
+      h('div', { class: 'row', style: { marginTop: '8px' } },
+        h('button', { class: 'small', onclick: importSave }, 'Import save file…'),
+        h('span', { class: 'hint' }, 'Export a save to keep it, move it to another device, or share it.'))),
     h('div', { class: 'title-card' },
       h('h2', {}, `${sc.year} AD — ${sc.name}`),
       h('p', { class: 'muted' }, sc.blurb),
@@ -610,7 +650,11 @@ function showSaveLoad() {
         h('div', { class: 'spacer' }),
         h('button', { class: 'small', disabled: !!state.battle, onclick: () => { toast(saveTo(`${SAVE_PREFIX}${k}`) ? 'Game saved.' : 'Could not save.'); render2(); } }, 'Save'),
         h('button', { class: 'small', disabled: !v, onclick: () => { modal.close(); resume(v.state); } }, 'Load'));
-    }), h('p', { class: 'hint' }, 'The game also autosaves every time it waits for your orders. Saves live in this browser only.'));
+    }),
+    h('div', { class: 'row', style: { padding: '8px 0' } },
+      h('button', { class: 'small', disabled: !!state.battle, onclick: () => exportSave(currentSave()) }, 'Export current game'),
+      h('button', { class: 'small', onclick: importSave }, 'Import save file…')),
+    h('p', { class: 'hint' }, 'The game also autosaves every time it waits for your orders. Slots live in this browser only; export a file to keep a game elsewhere or share it.'));
   };
   const modal = openModal({ title: 'Save / Load', body });
   render2();
@@ -628,7 +672,7 @@ export function showHelp() {
       h('p', {}, 'Any province can be delegated to its governor with a directive — Balanced, Develop economy, Build military, Hold the line, or Expand. Delegated provinces act on their own and report in the log. Officers can also be given standing assignments (tend farmland, oversee markets, maintain dikes, repair walls, keep order, drill troops) as their job each month. Drilling and patrols are free; building work draws on the province\u2019s assignment budget (a share of its monthly income), converting gold into progress as efficiently as Develop. An officer on assignment is busy; clear it to use them for orders that turn. Outlying provinces can remit part of their income to your capital.'),
       h('h3', {}, 'War'),
       h('p', {}, 'Attack an adjacent province with up to ten officers and their troops. Each province has its own battlefield. Terrain matters: forest and hills give cover, marsh and fords leave troops exposed. Cavalry is decisive only when it can Charge — a fresh unit riding through its target across open ground; through forest or marsh a charge fizzles. Infantry holds against cavalry and is the arm for sieges; archers shoot from range and trade volleys with other archers. A unit attacked from several sides suffers more.'),
-      h('p', {}, 'The castle fights too: each defender turn its walls shoot at every attacker beside them, and strong walls shelter the garrison. Assault the walls with infantry until they are breached (half strength); only then can an empty castle be entered, and an occupied castle holds until its defender falls. Wall damage lasts, so rebuild after a siege. Refusing a duel shames the whole army. Win by taking the castle, routing the enemy commander, or destroying their army within 30 days.'),
+      h('p', {}, 'The castle fights too: each defender turn its walls shoot at every attacker beside them, and strong walls shelter the garrison. Assault the walls with infantry until they are breached (half strength); only then can an empty castle be entered, and an occupied castle holds until its defender falls. Wall damage lasts, so rebuild after a siege. Refusing a duel in the open shames the whole army; a unit holding the castle may ignore challenges. Win by taking the castle, routing the enemy commander, or destroying their army within 30 days.'),
       h('p', {}, 'Not every war is a siege. A unit that begins its turn on an enemy field or market can Raze it: a field yields 150 grain for your army, a market 40 gold carried by the unit, and the province loses that tile\u2019s development until it is rebuilt. Raiding is an act of war like any other. Withdraw from your own edge of the map to leave in good order, keeping troops and plunder; a routed unit loses men and its plunder, and a captured officer\u2019s plunder returns to the province. If a commander withdraws, the rest fall back with light losses; if the commander is broken, the army routs.'),
       h('p', {}, 'When you defend, you place your units before the first day: anywhere except the attackers\u2019 approach, with the commander in the castle. Guard the fields and markets you can, or Auto-deploy.'),
       h('h3', {}, 'Politics & espionage'),

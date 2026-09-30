@@ -797,10 +797,16 @@ export function duelTargets(b, u) {
   return meleeTargets(b, u).filter((t) => (b.duels[duelKey(u, t)] ?? -99) + DUEL_COOLDOWN <= b.day);
 }
 
-export function duelAcceptChance(state, challenger, target) {
+// How often a computer-run officer takes up a challenge. Behind the walls
+// there is no reason to ride out unless likely to win; a commander, whose
+// defeat ends the battle, is warier than others.
+export function duelAcceptChance(state, b, challenger, target) {
+  const odds = 1 - duelWinChance(state, challenger, target);
+  if (isCastle(b, target.c, target.r)) return odds >= 0.6 ? 0.85 : 0.03;
   const a = state.officers[challenger.officer];
   const d = state.officers[target.officer];
-  return d.war >= a.war - 8 ? 0.85 : d.war >= a.war - 20 ? 0.35 : 0.12;
+  const base = d.war >= a.war - 8 ? 0.85 : d.war >= a.war - 20 ? 0.35 : 0.12;
+  return target.commander && odds < 0.5 ? base / 3 : base;
 }
 
 // Chance the challenger wins, by simulating the bout many times.
@@ -818,11 +824,16 @@ export function duelWinChance(state, challenger, target) {
   return decided ? wins / 400 : 0.5;
 }
 
+// Morale that shame from refused duels cannot push a unit below.
+const SHAME_FLOOR = 20;
+// How steeply War decides a duel: close matches stay risky, a wide gap rarely loses.
+const DUEL_EDGE = 5;
+
 // +1 challenger wins, -1 loses, 0 draw.
 function fightDuel(rng, warA, warD) {
   let hpA = 100;
   let hpD = 100;
-  const pA = Math.pow(warA, 3) / (Math.pow(warA, 3) + Math.pow(warD, 3));
+  const pA = Math.pow(warA, DUEL_EDGE) / (Math.pow(warA, DUEL_EDGE) + Math.pow(warD, DUEL_EDGE));
   for (let round = 1; round <= 30 && hpA > 0 && hpD > 0; round++) {
     const blow = randInt(rng, 8, 22);
     if (rand(rng) < pA) hpD -= blow;
@@ -842,7 +853,7 @@ export function doDuel(state, b, u, t) {
     b.pendingDuel = { challenger: u.id, target: t.id };
     return true;
   }
-  answerDuel(state, b, u, t, chance(state, duelAcceptChance(state, u, t)));
+  answerDuel(state, b, u, t, chance(state, duelAcceptChance(state, b, u, t)));
   return true;
 }
 
@@ -859,10 +870,17 @@ function answerDuel(state, b, u, t, accepted) {
   const a = officer(state, u);
   const d = officer(state, t);
   if (!accepted) {
-    // Refusing shames the whole army; a second refusal breaks the unit's nerve.
+    // Behind the walls there is no shame in ignoring a challenge.
+    if (isCastle(b, t.c, t.r)) {
+      addLog(b, `${d.name} keeps to the walls and ignores the challenge.`);
+      return;
+    }
+    // In the open, refusing shames the whole army and a second refusal breaks
+    // the unit's nerve for a day. Shame alone never routs a unit.
+    const shame = (x, n) => Math.max(Math.min(x.morale, SHAME_FLOOR), x.morale - n);
     t.refusals += 1;
-    t.morale = clamp(t.morale - 15, 0, 100);
-    for (const ally of activeUnits(b, t.side)) if (ally !== t) ally.morale = clamp(ally.morale - 5, 0, 100);
+    t.morale = shame(t, 15);
+    for (const ally of activeUnits(b, t.side)) if (ally !== t) ally.morale = shame(ally, 5);
     u.morale = clamp(u.morale + 10, 0, 100);
     let msg = `${d.name} refuses the challenge! The whole army is shamed.`;
     if (t.refusals >= 2) {
@@ -870,7 +888,6 @@ function answerDuel(state, b, u, t, accepted) {
       msg += ` ${d.name}'s troops lose heart and will not fight ${b.side === t.side ? 'today' : 'tomorrow'}.`;
     }
     addLog(b, msg);
-    if (t.morale <= 0) defeatUnit(state, b, t, 'routed');
     return;
   }
   addLog(b, `${a.name} and ${d.name} ride out to duel!`);
@@ -1366,7 +1383,7 @@ export function autoResolve(state, b) {
       const p = b.pendingDuel;
       const u = b.units.find((x) => x.id === p.challenger);
       const t = b.units.find((x) => x.id === p.target);
-      answerPendingDuel(state, b, duelAcceptChance(state, u, t) > 0.5);
+      answerPendingDuel(state, b, duelAcceptChance(state, b, u, t) > 0.5);
       continue;
     }
     endPhase(state, b);

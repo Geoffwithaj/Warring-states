@@ -471,3 +471,41 @@ test('an officer given orders cannot also work a standing assignment that month'
   assert.equal(p.farm, afterOrder, 'the assignment waits for next month');
   assert.equal(o.task, 'farm', 'and stays in place for next month');
 });
+
+test('a unit holding the castle may ignore challenges, and shame alone never routs a unit', async () => {
+  const { doDuel, answerPendingDuel } = await import('../src/engine/battle.js');
+  const state = createGame({ seed: 22 });
+  const { b, a, d } = openField(state, 'inf', 'inf');
+  b.humanSides = { att: false, def: true };
+  // In the castle: no shame.
+  d.c = b.castle.c; d.r = b.castle.r;
+  a.c = neighbors(d.c, d.r)[0].c; a.r = neighbors(d.c, d.r)[0].r;
+  const before = d.morale;
+  doDuel(state, b, a, d);
+  answerPendingDuel(state, b, false);
+  assert.equal(d.morale, before);
+  assert.equal(d.refusals, 0);
+  // In the open, morale falls but stops at 20.
+  const open = openField(state, 'inf', 'inf');
+  open.b.humanSides = { att: false, def: true };
+  for (let i = 0; i < 8; i++) {
+    open.b.day += 3;
+    open.a.done = false;
+    doDuel(state, open.b, open.a, open.d);
+    answerPendingDuel(state, open.b, false);
+  }
+  assert.equal(open.d.morale, 20);
+  assert.equal(open.d.status, 'active');
+});
+
+test('War decides duels steeply: a wide gap rarely loses', async () => {
+  const { duelWinChance } = await import('../src/engine/battle.js');
+  const state = createGame({ seed: 22 });
+  const { a, d } = openField(state, 'inf', 'inf');
+  state.officers[a.officer] = { ...state.officers[a.officer], war: 90 };
+  state.officers[d.officer] = { ...state.officers[d.officer], war: 70 };
+  assert.ok(duelWinChance(state, a, d) > 0.95);
+  state.officers[d.officer] = { ...state.officers[d.officer], war: 85 };
+  const close = duelWinChance(state, a, d);
+  assert.ok(close > 0.55 && close < 0.85, `close match stays risky (${close})`);
+});
