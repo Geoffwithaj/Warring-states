@@ -129,7 +129,8 @@ function managementSection(ctx, p) {
   const refresh = (fn) => (v) => { fn(v); ctx.refresh(); };
   const directiveOpts = [['', 'Rule directly'], ...Object.entries(DIRECTIVES).map(([k, d]) => [k, `Delegate: ${d.label}`])];
   const income = Math.floor(monthlyGold(p) * (1 - (isCapital ? 0 : p.remit)));
-  const funded = officers.filter((o) => FUNDED_TASKS.has(o.task)).length;
+  // Officers with orders this month skip their assignment until next month.
+  const funded = officers.filter((o) => FUNDED_TASKS.has(o.task) && !usedThisMonth(state, o)).length;
   return h('div', { class: 'section' }, h('h3', {}, 'Management'),
     h('div', { class: 'mgmt' },
       h('span', {}, 'Tax rate'),
@@ -152,7 +153,7 @@ function managementSection(ctx, p) {
     ),
     p.delegate ? h('p', { class: 'hint' }, `${DIRECTIVES[p.delegate.directive].desc} The governor also sets officer assignments and their budget each month.`) : null,
     h('p', { class: 'hint' },
-      `A standing assignment is that officer\u2019s job every month, done at month end and skipped in any month they are given other orders. `,
+      `A standing assignment is what an officer does in any month they are given no other orders; it is done at month end. An officer who already had orders this month starts their assignment next month. `,
       `Drilling and patrols cost nothing. Building work ($) shares the assignment budget${funded ? ` — ${funded} officer${funded > 1 ? 's' : ''} now, ~${Math.floor(income * taskBudgetShare(p) / funded)} gold each` : ''} and turns gold into progress as efficiently as Develop.`),
   );
 }
@@ -163,9 +164,12 @@ function officerTable(ctx, officers, mine) {
   const rows = officers
     .sort((a, b) => (b.id === f?.ruler) - (a.id === f?.ruler) || b.troops - a.troops)
     .map((o) => {
+      const used = usedThisMonth(state, o);
       const taskCell = mine && !state.provinces[ctx.pid].delegate
-        ? select([['', '—'], ...Object.entries(TASKS).map(([k, label]) => [k, FUNDED_TASKS.has(k) ? `${label} ($)` : label])], o.task || '', (v) => { setTask(state, o.id, v || null); ctx.refresh(); })
-        : h('span', { class: 'muted' }, o.task ? TASKS[o.task] : '—');
+        ? h('div', {},
+          select([['', '—'], ...Object.entries(TASKS).map(([k, label]) => [k, FUNDED_TASKS.has(k) ? `${label} ($)` : label])], o.task || '', (v) => { setTask(state, o.id, v || null); ctx.refresh(); }),
+          used && o.task ? h('div', { class: 'hint' }, 'starts next month') : null)
+        : h('span', { class: 'muted' }, o.task ? TASKS[o.task] + (used ? ' (next month)' : '') : '—');
       return h('tr', { class: 'clickable', onclick: (e) => { if (e.target.tagName !== 'SELECT') ctx.showOfficer(o.id); } },
         h('td', {}, o.name, o.id === f?.ruler ? h('span', { class: 'tag gold' }, 'Lord') : null,
           mine && usedThisMonth(state, o) ? h('span', { class: 'tag', title: 'Already has orders this month' }, 'Busy') : null),

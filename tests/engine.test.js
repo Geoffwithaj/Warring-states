@@ -448,3 +448,26 @@ test('an army of one still storms the castle rather than waiting out the month',
   assert.equal(b.result.winner, 'att', b.result.reason);
   assert.ok(b.day < 30);
 });
+
+test('an officer given orders cannot also work a standing assignment that month', async () => {
+  const { setTask } = await import('../src/engine/commands.js');
+  const state = createGame({ humanRulers: ['cao-cao'], seed: 42 });
+  newGameStart(state);
+  advance(state);
+  const p = state.provinces.chenliu;
+  for (const x of officersIn(state, 'chenliu')) setTask(state, x.id, null);
+  const o = officersIn(state, 'chenliu').find((x) => x.id !== 'cao-cao');
+  assert.ok(playerCommand(state, 'develop', { field: 'farm', officer: o.id, gold: 100 }).ok);
+  const afterOrder = p.farm;
+  setTask(state, o.id, 'farm');
+  playerCommand(state, 'rest', {});
+  const month = state.month;
+  while (state.month === month) {
+    const r = advance(state);
+    if (r.type === 'await') playerCommand(state, 'rest', {});
+    else if (r.type !== 'month') break;
+  }
+  assert.notEqual(state.month, month, 'the month ended');
+  assert.equal(p.farm, afterOrder, 'the assignment waits for next month');
+  assert.equal(o.task, 'farm', 'and stays in place for next month');
+});
