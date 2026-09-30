@@ -191,10 +191,10 @@ export const COMMANDS = {
     return ok(`${who} to ${dst.name}.`);
   },
 
-  war(state, pid, { to, officers, commander, food }, opts = {}) {
+  war(state, pid, { to, officers, commander, food, intent }, opts = {}) {
     const err = validateWar(state, { from: pid, to, officerIds: officers, food });
     if (err) return fail(err);
-    const result = declareWar(state, { from: pid, to, officerIds: officers, commanderId: commander, food }, opts);
+    const result = declareWar(state, { from: pid, to, officerIds: officers, commanderId: commander, food, intent }, opts);
     return ok(result.kind === 'captured' ? `${state.provinces[to].name} is taken!` : 'Battle is joined!', { war: result });
   },
 

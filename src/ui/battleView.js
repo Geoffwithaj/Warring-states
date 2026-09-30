@@ -8,7 +8,8 @@ import {
   aiStep, endPhase, phaseDone, previewMelee, previewShoot, fireChance, duelAcceptChance, canRetreat,
   terrainAt, chargeTargets, chargeLanding, previewCharge, doCharge, canAssault, doAssault, previewAssault,
   isBreached, breachLevel, isCastle, castleOccupant, duelTargets, duelWinChance, answerPendingDuel,
-  unitHasOptions, garrisonVolley, GARRISON_RANGE, hexDist,
+  unitHasOptions, garrisonVolley, GARRISON_RANGE, hexDist, siteAt, canRaze, doRaze, RAZE_YIELD,
+  canDeployAt, deployUnit, finishDeployment, autoDeploy,
 } from '../engine/battle.js';
 import { forceName } from '../engine/state.js';
 
@@ -21,6 +22,11 @@ const TERRAIN_COLOR = {
 };
 const TERRAIN_GLYPH = { forest: '♣', hills: '⌒', mountain: '▲', marsh: '≈', castle: '♜', ford: '≈' };
 const UNIT_GLYPH = { inf: '⚔', cav: '♞', arc: '➶' };
+const SITE_STYLE = {
+  farm: { fill: '#d6c35a', glyph: '⁂', label: 'Farmland' },
+  market: { fill: '#c9a27a', glyph: '⌂', label: 'Market' },
+  razed: { fill: '#6e5a3e', glyph: '✕', label: 'Razed' },
+};
 const AI_DELAY = 220;
 
 const center = (c, r) => [R * SQ3 * (c + 0.5 * (r & 1)) + (R * SQ3) / 2 + PAD, R * 1.5 * r + R + PAD];
@@ -61,7 +67,12 @@ export function openBattleView(state, { onFinish }) {
   const TOUCH = window.matchMedia('(hover: none)').matches;
   const color = (u) => state.forces[b.forces[u.side]]?.color || '#999';
   const oName = (u) => state.officers[u.officer].name;
-  const isHumanTurn = () => !b.result && !b.pendingDuel && b.humanSides[b.side];
+  const isHumanTurn = () => !b.result && !b.pendingDuel && !b.deploying && b.humanSides[b.side];
+
+  function razedText() {
+    const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    return [b.razed.farm ? n(b.razed.farm, 'field', 'fields') : null, b.razed.market ? n(b.razed.market, 'market', 'markets') : null].filter(Boolean).join(', ');
+  }
 
   function select(u) {
     ui.sel = u && u.side === b.side && isHumanTurn() && !u.done ? u.id : null;
@@ -99,7 +110,21 @@ export function openBattleView(state, { onFinish }) {
     scheduleAI();
   }
 
+  // Before day 1 a defending player places their units.
+  function onDeployClick(c, r) {
+    const target = unitAt(b, c, r);
+    const u = b.units.find((x) => x.id === ui.sel);
+    if (target && target.side === 'def') {
+      ui.sel = target.commander ? null : target.id;
+      ui.focus = { unit: target.id };
+      render();
+      return;
+    }
+    if (u && deployUnit(b, u, c, r)) render();
+  }
+
   function onHexClick(c, r) {
+    if (b.deploying && b.humanSides.def) return onDeployClick(c, r);
     if (!isHumanTurn() || ui.busy) return;
     const u = selected();
     const target = unitAt(b, c, r);
@@ -245,8 +270,12 @@ export function openBattleView(state, { onFinish }) {
   // ---- Rendering ----------------------------------------------------------
 
   function render() {
-    const u = selected();
+    const deploySel = b.deploying ? b.units.find((x) => x.id === ui.sel) : null;
+    const u = b.deploying ? null : selected();
     const reach = u && !ui.mode ? reachable(b, u) : new Map();
+    if (deploySel) {
+      for (let r = 0; r < BATTLE_H; r++) for (let c = 0; c < BATTLE_W; c++) if (canDeployAt(b, deploySel, c, r) && !unitAt(b, c, r)) reach.set(idx(c, r), { c, r });
+    }
     const targets = new Set(u && !ui.mode ? [...meleeTargets(b, u), ...shootTargets(b, u)].map((t) => t.id) : []);
     const modeT = new Set(u && ui.mode === 'duel' ? duelTargets(b, u).map((t) => t.id)
       : u && ui.mode === 'charge' ? chargeTargets(b, u).map((t) => t.id) : []);
@@ -259,9 +288,11 @@ export function openBattleView(state, { onFinish }) {
       for (let c = 0; c < BATTLE_W; c++) {
         const ter = terrainAt(b, c, r);
         const k = idx(c, r);
+        const site = siteAt(b, c, r);
+        const siteStyle = site ? SITE_STYLE[site.razed ? 'razed' : site.kind] : null;
         const poly = s('polygon', {
           class: 'hex' + (reach.has(k) && !(c === u?.c && r === u?.r) ? ' reach' : '') + (fireT.has(k) ? ' firetarget' : ''),
-          points: hexPoints(c, r), fill: TERRAIN_COLOR[ter],
+          points: hexPoints(c, r), fill: siteStyle && ter !== 'castle' ? siteStyle.fill : TERRAIN_COLOR[ter],
         });
         if (ter === 'castle') {
           poly.setAttribute('stroke', isBreached(b) ? '#8a2a1a' : '#3b2f22');
@@ -272,13 +303,21 @@ export function openBattleView(state, { onFinish }) {
         if (!TOUCH) poly.addEventListener('mouseenter', () => { ui.focus = { c, r }; renderInfo(); });
         svg.append(poly);
         if (reach.has(k) && !(c === u?.c && r === u?.r)) svg.append(s('polygon', { class: 'hex reach-fill', points: hexPoints(c, r, 0.9) }));
-        if (TERRAIN_GLYPH[ter]) {
+        if (siteStyle) {
+          const [x, y] = center(c, r);
+          svg.append(s('text', { x, y: y + 6, 'text-anchor': 'middle', 'font-size': 16, fill: '#0006', 'pointer-events': 'none' }, siteStyle.glyph));
+        } else if (TERRAIN_GLYPH[ter]) {
           const [x, y] = center(c, r);
           svg.append(s('text', { x, y: y + 6, 'text-anchor': 'middle', 'font-size': ter === 'castle' ? 22 : 14, fill: '#0005', 'pointer-events': 'none' }, TERRAIN_GLYPH[ter]));
         }
         if (b.fire[k] > 0) svg.append(s('polygon', { class: 'fire', points: hexPoints(c, r, 0.85) }));
         if (landing && landing.c === c && landing.r === r) svg.append(s('polygon', { class: 'hex target', fill: 'none', points: hexPoints(c, r, 0.8) }));
       }
+    }
+    // The attackers' arrival edge, where they can withdraw in good order.
+    {
+      const x0 = b.edge === 'west' ? 0 : W - 6;
+      svg.append(s('rect', { x: x0, y: 0, width: 6, height: H, fill: state.forces[b.forces.att]?.color || '#999', opacity: 0.5, 'pointer-events': 'none' }));
     }
     // The castle's walls, drawn as a bar under the castle hex.
     {
@@ -290,7 +329,7 @@ export function openBattleView(state, { onFinish }) {
     for (const unit of b.units.filter((x) => x.status === 'active')) {
       const [x, y] = center(unit.c, unit.r);
       const finished = unit.side === b.side && !unitHasOptions(b, unit);
-      const g = s('g', { class: 'unit' + (unit.id === ui.sel ? ' sel' : '') + (finished ? ' done' : ''), transform: `translate(${x},${y})`, style: 'cursor:pointer' });
+      const g = s('g', { class: 'unit' + (unit.id === ui.sel || unit.id === deploySel?.id ? ' sel' : '') + (finished ? ' done' : ''), transform: `translate(${x},${y})`, style: 'cursor:pointer' });
       g.append(s('circle', { class: 'body', r: R * 0.62, fill: color(unit) }));
       if (targets.has(unit.id)) g.append(s('circle', { r: R * 0.8, fill: 'none', stroke: '#ff5a4a', 'stroke-width': 3 }));
       if (modeT.has(unit.id)) g.append(s('circle', { r: R * 0.8, fill: 'none', stroke: ui.mode === 'charge' ? '#ffa030' : '#ffd24a', 'stroke-width': 3, 'stroke-dasharray': '4 3' }));
@@ -320,6 +359,12 @@ export function openBattleView(state, { onFinish }) {
   function terrainLine(c, r) {
     const ter = terrainAt(b, c, r);
     if (ter === 'castle') return castleLine();
+    const site = siteAt(b, c, r);
+    if (site) {
+      const what = site.razed ? `Razed ${site.kind === 'farm' ? 'fields' : 'market'}`
+        : site.kind === 'farm' ? `Farmland (razing yields ${RAZE_YIELD.farm.food} grain)` : `Market (razing yields ${RAZE_YIELD.market.gold} gold)`;
+      return `${what} on ${TERRAIN[ter].label.toLowerCase()} · melee defence ×${TERRAIN[ter].def} · arrows land ×${TERRAIN[ter].cover}`;
+    }
     const burning = b.fire[idx(c, r)] > 0 ? ' · on fire!' : '';
     const t = TERRAIN[ter];
     return `${t.label} · melee defence ×${t.def} · arrows land ×${t.cover}${burning}`;
@@ -344,7 +389,7 @@ export function openBattleView(state, { onFinish }) {
       rows.push(h('div', { class: 'row' },
         h('span', { class: 'swatch', style: { background: color(u) } }),
         h('b', {}, o.name), u.commander ? ' ★' : '', h('span', { class: 'muted' }, u.side === b.side && !unitHasOptions(b, u) ? '(done)' : '')));
-      rows.push(h('div', {}, `${UNIT_TYPES[u.type].label} · ${fmt(u.troops)} troops · morale ${u.morale} · training ${u.training}`));
+      rows.push(h('div', {}, `${UNIT_TYPES[u.type].label} · ${fmt(u.troops)} troops · morale ${u.morale} · training ${u.training}${u.loot ? ` · carrying ${u.loot} gold` : ''}`));
       rows.push(h('div', { class: 'muted' }, `INT ${o.int} · WAR ${o.war} · ${terrainLine(u.c, u.r)}`));
       if (u.side === 'att' && b.walls > 0 && hexDist(u, b.castle) <= GARRISON_RANGE) {
         rows.push(h('div', { class: 'warn' }, `Under the walls: the garrison will loose ~${fmt(garrisonVolley(b, u))} arrows' worth of casualties at it each defender turn.`));
@@ -378,7 +423,28 @@ export function openBattleView(state, { onFinish }) {
     info.replaceChildren(...rows.filter(Boolean));
   }
 
+  function renderDeploy() {
+    const defName = forceName(state, b.forces.def);
+    top.replaceChildren(
+      h('h2', { style: { fontSize: '19px' } }, `Battle of ${state.provinces[b.pid].name}`),
+      h('div', {}, `${forceName(state, b.forces.att)} approaches from the ${b.edge}.`),
+      h('div', { class: 'hint' }, castleLine()));
+    mid.replaceChildren(
+      h('p', {}, h('b', {}, `Deploy the army of ${defName}.`)),
+      h('p', { class: 'hint' }, 'Select a unit, then a highlighted hex. Units can start anywhere except next to the enemy\u2019s arrival edge; the commander holds the castle. Standing on your fields and markets protects them from being razed; spreading out covers more land but risks being beaten piecemeal.'),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => { autoDeploy(state, b); ui.sel = null; render(); } }, 'Auto-deploy'),
+        h('button', { class: 'primary', onclick: () => { finishDeployment(b); ui.sel = null; render(); scheduleAI(); } }, 'Begin battle')),
+      ...['att', 'def'].map((sd) => h('div', { class: 'ulist', style: { marginTop: '8px' } },
+        h('div', { class: 'muted' }, sd === 'att' ? 'Attackers' : 'Defenders'),
+        b.units.filter((x) => x.side === sd).map((x) => h('div', { class: 'u', onclick: () => sd === 'def' && !x.commander && ((ui.sel = x.id), render()) },
+          h('span', { class: 'swatch', style: { background: color(x) } }), `${oName(x)}${x.commander ? ' ★' : ''}`, h('span', { class: 'spacer' }),
+          h('span', { class: 'muted' }, `${UNIT_TYPES[x.type].short} · ${fmt(x.troops)}`))))));
+    logBox.replaceChildren();
+  }
+
   function renderSide(u) {
+    if (b.deploying && b.humanSides.def) return renderDeploy();
     const attName = forceName(state, b.forces.att);
     const defName = forceName(state, b.forces.def);
     const turnName = b.side === 'att' ? attName : defName;
@@ -387,7 +453,7 @@ export function openBattleView(state, { onFinish }) {
       h('h2', { style: { fontSize: '19px' } }, `Battle of ${state.provinces[b.pid].name}`),
       h('div', {}, `Day ${Math.min(b.day, b.maxDays)} / ${b.maxDays} · ${b.weather[0].toUpperCase() + b.weather.slice(1)} · wind from the ${WIND_NAMES[b.wind]}`),
       h('div', { class: 'hint' }, `Attacker ${attName}: food ${fmt(b.attFood)} · Defender ${defName}: food ${fmt(b.defFood)}`),
-      h('div', { class: 'hint' }, castleLine()),
+      h('div', { class: 'hint' }, castleLine(), b.razed.farm + b.razed.market ? ` · razed: ${razedText()}` : ''),
       h('div', { style: { marginTop: '4px' } }, h('span', { class: 'swatch', style: { background: state.forces[b.forces[b.side]].color } }), ` ${turnName}'s turn`,
         isHumanTurn() ? h('span', { class: 'muted' }, ` · ${pending} unit${pending === 1 ? '' : 's'} can still act`) : h('span', { class: 'muted' }, ' (thinking…)')),
     );
@@ -401,20 +467,32 @@ export function openBattleView(state, { onFinish }) {
       const btn = (label, mode, enabled, title) => h('button', {
         class: 'small' + (ui.mode === mode ? ' primary' : ''), disabled: !enabled, title, onclick: () => setMode(mode),
       }, label);
+      const razeOk = canRaze(b, u);
       content.push(h('div', { class: 'row', style: { marginTop: '6px' } },
+        u.side === 'att' ? h('button', {
+          class: 'small', disabled: !razeOk,
+          title: 'Destroy the field or market this unit started its turn on, and seize its yield',
+          onclick: () => { doRaze(state, b, u); afterAction(); },
+        }, 'Raze') : null,
         u.type === 'cav' ? btn('Charge', 'charge', canCharge, 'Only a fresh unit can charge, and it must have clear ground on the far side of the target') : null,
         u.side === 'att' && u.type !== 'cav' ? btn('Assault walls', 'assault', assault, 'Batter the castle walls from an adjacent hex') : null,
         btn(`Fire (${pct(fireChance(state, b, u))})`, 'fire', canFire, 'Set an adjacent hex ablaze'),
         btn('Duel', 'duel', canDuel, 'Challenge an adjacent officer to single combat'),
         h('button', { class: 'small', onclick: () => { doWait(b, u); afterAction(); } }, 'Wait'),
-        h('button', { class: 'small danger', disabled: !retreatOk, onclick: () => { doRetreat(state, b, u); afterAction(); } }, 'Withdraw')));
+        h('button', {
+          class: 'small danger', disabled: !retreatOk,
+          title: u.side === 'att' ? 'Leave the field in good order from your own edge, keeping troops and plunder' : 'Leave by a map edge toward a friendly province',
+          onclick: () => { doRetreat(state, b, u); afterAction(); },
+        }, 'Withdraw')));
       const tap = TOUCH ? 'tap' : 'click';
       content.push(h('p', { class: 'hint' }, {
         fire: `${tap[0].toUpperCase() + tap.slice(1)} a highlighted hex to set it ablaze. Fire spreads with the wind and burns hardest in forest.`,
         duel: `${tap[0].toUpperCase() + tap.slice(1)} an adjacent enemy officer to challenge them.`,
         charge: `${tap[0].toUpperCase() + tap.slice(1)} an enemy to charge through it. The charge is only as good as the worst ground it crosses.`,
         assault: `${tap[0].toUpperCase() + tap.slice(1)} the castle to assault its walls. They are breached at half strength; only then can an empty castle be entered.`,
-      }[ui.mode] || (u.moved
+      }[ui.mode] || (razeOk
+        ? `Standing on developed land: Raze it to seize its yield, or move on.${u.loot ? ` Carrying ${u.loot} gold.` : ''}`
+        : u.moved
         ? 'This unit has moved; it can still attack, shoot, set a fire or assault the walls, or Wait.'
         : u.type === 'arc' ? `Move (blue hexes), then ${tap} an enemy in range to loose arrows.`
           : u.type === 'cav' ? `Charge from where you stand, or move and make an ordinary attack.${TOUCH ? ' Tap once to preview, again to strike.' : ''}`
@@ -441,7 +519,8 @@ export function openBattleView(state, { onFinish }) {
     resultBox.replaceChildren(h('div', { class: 'battle-result' },
       h('h2', {}, humanWon ? 'Victory!' : state.forces[b.forces[b.result.winner === 'att' ? 'def' : 'att']]?.human ? 'Defeat' : 'Battle over'),
       h('p', {}, `${forceName(state, b.forces[b.result.winner])} wins. ${b.result.reason}`),
-      h('p', { class: 'hint' }, `The walls of ${state.provinces[b.pid].name} stand at ${Math.round(b.walls)} of ${b.wallsMax}.`),
+      h('p', { class: 'hint' }, `The walls of ${state.provinces[b.pid].name} stand at ${Math.round(b.walls)} of ${b.wallsMax}.`,
+        b.razed.farm + b.razed.market ? ` Razed: ${razedText()}.` : ''),
       h('button', { class: 'primary', onclick: close }, 'Continue')));
   }
 
@@ -453,6 +532,8 @@ export function openBattleView(state, { onFinish }) {
   }
 
   render();
+  if (b.deploying && b.humanSides.def) return;
+  if (b.deploying) finishDeployment(b);
   if (b.pendingDuel) promptDuel();
   else scheduleAI();
 }

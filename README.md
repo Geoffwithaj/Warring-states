@@ -68,6 +68,10 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 - Development has diminishing returns, and each project uses the relevant officer stat: INT for
   farmland, commerce and dikes, WAR for walls, CHA for relief.
 - Food trades at a market price that changes with the seasons.
+- **Geography sets potential**: each province has a number of fertile tiles (25 Farmland each) and
+  market sites (60 Commerce each). The Yellow River plain can hold many fields; the mountainous north
+  and the far south have little land but strong ground. Development stays a continuous number; every
+  full tile's worth shows as a field or market on the province's battlefield.
 
 **Delegation and management tools (new)**
 - **Delegate** any province to its governor with one of five directives: Balanced, Develop economy,
@@ -106,6 +110,18 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 - Your turn ends by itself when no unit has anything left to do; press End turn to finish early.
 - Morale, training, fire that spreads with the wind (put out by rain), supplies for a 30-day
   campaign. Win by taking the castle, routing the enemy commander, or destroying the enemy army.
+- **Raiding**: battle is battle — a couple of fast units can go in to burn and plunder instead of
+  laying siege. Developed fields and markets appear on the battlefield (the first six markets ring the
+  castle; fields follow the rivers outward from the city). A unit that *starts* its turn on one can
+  **Raze** it: a field gives 150 grain to the army's supplies, a market 40 gold carried by the unit, and
+  the province loses that tile's development (and a little order and population) until it is rebuilt.
+  Computer lords raid neighbours they cannot yet conquer, mostly before the harvest.
+- **Withdrawing**: leaving from your own edge of the map is orderly and free — troops and plunder go
+  home. Defenders can leave by any other edge if a friendly province lies beyond. Units that rout lose
+  men and their plunder, and plunder taken back from captured officers returns to the province. If the
+  commander withdraws, the rest fall back with 10% losses; if the commander is broken, they rout (40%).
+- **Defender deployment**: as in RTK II, the defender places its units before the first day, anywhere
+  but the attackers' approach; the commander holds the castle. With few units you choose what to guard.
 - After a battle, captured officers can be recruited, released or executed.
 - Battles between two computer lords resolve instantly with the same engine. Your battles can be played
   by hand or auto-resolved.

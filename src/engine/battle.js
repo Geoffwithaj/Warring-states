@@ -144,7 +144,69 @@ export function provinceField(pid) {
     const ter = t[idx(n.c, n.r)];
     if (ter === 'river' || ter === 'mountain') t[idx(n.c, n.r)] = ter === 'river' ? 'ford' : 'hills';
   }
-  return { terrain: t, castle };
+  const { farms, markets } = placeSites(rng, t, castle, meta);
+  return { terrain: t, castle, farms, markets };
+}
+
+// Arrival strips: the two outermost columns on each side, kept clear of resources.
+export const inArrivalStrip = (c) => c <= 1 || c >= BATTLE_W - 2;
+
+// Where a province's fields and markets can be. Markets: the six hexes around
+// the castle first, then fords, riverbanks and the road through town. Fields:
+// the lowland nearest water and the city (cleared to plains if need be),
+// ordered nearest the castle first, since land by the city is farmed first.
+function placeSites(rng, t, castle, meta) {
+  const all = [];
+  for (let r = 0; r < BATTLE_H; r++) for (let c = 0; c < BATTLE_W; c++) all.push({ c, r });
+  const isWater = (c, r) => t[idx(c, r)] === 'river' || t[idx(c, r)] === 'ford';
+  const nearWater = (c, r) => neighbors(c, r).some((n) => isWater(n.c, n.r));
+  const isCastleHex = (h) => h.c === castle.c && h.r === castle.r;
+  const ring = neighbors(castle.c, castle.r)
+    .filter((n) => t[idx(n.c, n.r)] !== 'river' && !inArrivalStrip(n.c))
+    .map((n) => ({ c: n.c, r: n.r, k: rand(rng) }))
+    .sort((a, z) => a.k - z.k);
+  const ringSet = new Set(ring.map((h) => idx(h.c, h.r)));
+  const extras = all
+    .filter((h) => !isCastleHex(h) && !ringSet.has(idx(h.c, h.r)) && !inArrivalStrip(h.c))
+    .filter((h) => !['river', 'mountain', 'marsh'].includes(t[idx(h.c, h.r)]))
+    .map((h) => {
+      const ter = t[idx(h.c, h.r)];
+      const base = ter === 'ford' ? 0 : nearWater(h.c, h.r) ? 2 : h.r === castle.r ? 3 : 9;
+      return { ...h, k: base + hexDist(h, castle) * 0.5 + rand(rng) };
+    })
+    .sort((a, z) => a.k - z.k);
+  const markets = [...ring, ...extras].slice(0, meta.markets).map(({ c, r }) => ({ c, r }));
+  const taken = new Set([idx(castle.c, castle.r), ...markets.map((h) => idx(h.c, h.r))]);
+
+  // Distance to water, for placing fields along the rivers.
+  const water = new Array(BATTLE_W * BATTLE_H).fill(99);
+  const queue = all.filter((h) => isWater(h.c, h.r));
+  for (const h of queue) water[idx(h.c, h.r)] = 0;
+  while (queue.length) {
+    const h = queue.shift();
+    for (const n of neighbors(h.c, h.r)) {
+      if (water[idx(n.c, n.r)] > water[idx(h.c, h.r)] + 1) {
+        water[idx(n.c, n.r)] = water[idx(h.c, h.r)] + 1;
+        queue.push(n);
+      }
+    }
+  }
+  const soil = { plains: 0, hills: 3, forest: 4, marsh: 3 };
+  const fertile = all
+    .filter((h) => !taken.has(idx(h.c, h.r)) && !inArrivalStrip(h.c) && t[idx(h.c, h.r)] in soil)
+    .map((h) => ({
+      ...h,
+      k: (meta.river ? Math.min(water[idx(h.c, h.r)], 6) * 1.2 : 0) + hexDist(h, castle) * 0.5
+        + soil[t[idx(h.c, h.r)]] + rand(rng) * 2,
+    }))
+    .sort((a, z) => a.k - z.k)
+    .slice(0, meta.fertile);
+  for (const h of fertile) t[idx(h.c, h.r)] = 'plains';
+  const farms = fertile
+    .map((h) => ({ c: h.c, r: h.r, k: hexDist(h, castle) + rand(rng) * 0.9 }))
+    .sort((a, z) => a.k - z.k)
+    .map(({ c, r }) => ({ c, r }));
+  return { farms, markets };
 }
 
 // Which edge of the field an army marching from `from` into `to` arrives on.
@@ -188,9 +250,70 @@ function freeHexNear(b, c0, r0, allow = () => true) {
   return best;
 }
 
+// ---- Defender deployment -----------------------------------------------------
+
+// Defenders may start anywhere except the attackers' arrival strip and the
+// column beside it; the commander holds the castle.
+export function canDeployAt(b, u, c, r) {
+  if (u.side !== 'def' || u.commander) return false;
+  if (!inBounds(c, r) || edgeDistance(b.edge, c, r) < 3) return false;
+  const ter = terrainAt(b, c, r);
+  if (ter === 'river' || ter === 'castle') return false;
+  const other = unitAt(b, c, r);
+  return !other || other === u;
+}
+
+export function deployUnit(b, u, c, r) {
+  if (!b.deploying || !canDeployAt(b, u, c, r)) return false;
+  u.c = c;
+  u.r = r;
+  return true;
+}
+
+export function finishDeployment(b) {
+  b.deploying = false;
+}
+
+// Where the computer would place its defenders: covering the most valuable
+// developed land, favouring good ground and the castle's surroundings, and
+// spreading out rather than stacking up.
+export function autoDeploy(state, b) {
+  const units = activeUnits(b, 'def').filter((u) => !u.commander).sort((a, z) => z.troops - a.troops);
+  for (const u of units) u.c = -10; // lift them off the board while choosing
+  const placed = [];
+  for (const u of units) {
+    let best = null;
+    for (let r = 0; r < BATTLE_H; r++) {
+      for (let c = 0; c < BATTLE_W; c++) {
+        if (!canDeployAt(b, u, c, r) || unitAt(b, c, r)) continue;
+        const site = siteAt(b, c, r);
+        const ter = terrainAt(b, c, r);
+        let s = site ? (site.kind === 'market' ? 4 : 2.5) : 0;
+        s += (TERRAIN[ter].def - 1) * (u.type === 'cav' ? -6 : 8);
+        if (u.type === 'arc' && HIGH_GROUND.has(ter)) s += 2;
+        if (u.type === 'cav' && ter === 'plains') s += 1.5;
+        s -= hexDist({ c, r }, b.castle) * 0.45;
+        // Face the enemy a little, but do not crowd friends.
+        s += (BATTLE_W - edgeDistance(b.edge, c, r)) * 0.05;
+        if (placed.some((p) => hexDist(p, { c, r }) <= 1)) s -= 2.5;
+        if (!best || s > best.s) best = { c, r, s };
+      }
+    }
+    if (best) {
+      u.c = best.c;
+      u.r = best.r;
+      placed.push(best);
+    } else {
+      const spot = freeHexNear(b, b.castle.c, b.castle.r);
+      u.c = spot.c;
+      u.r = spot.r;
+    }
+  }
+}
+
 // sides: { att: {force, officers:[{officer, troops, training, unit}], commander, food},
 //          def: {force|null, officers:[...], commander, food} }
-export function createBattle(state, { pid, from, walls, att, def, humanSides }) {
+export function createBattle(state, { pid, from, walls, att, def, humanSides, farmTiles = 0, marketTiles = 0, intent = 'conquer' }) {
   const field = provinceField(pid);
   const edge = approachEdge(from, pid);
   const b = {
@@ -216,7 +339,21 @@ export function createBattle(state, { pid, from, walls, att, def, humanSides }) 
     duels: {},
     pendingDuel: null,
     humanSides: humanSides || { att: false, def: false },
+    // Developed fields and markets on the field: null, or { kind, razed }.
+    sites: new Array(BATTLE_W * BATTLE_H).fill(null),
+    razed: { farm: 0, market: 0 },
+    intent, // what the attackers came for: 'conquer' or 'raid'
   };
+  // Which of the province's sites are developed: nearest the castle first,
+  // with a little variation from battle to battle.
+  const develop = (list, n, kind, fixed = 0) => {
+    list.map((h, i) => ({ h, k: i < fixed ? i * 0.01 : i + rand(state) * 3 }))
+      .sort((a, z) => a.k - z.k)
+      .slice(0, n)
+      .forEach(({ h }) => { b.sites[idx(h.c, h.r)] = { kind, razed: false }; });
+  };
+  develop(field.farms, Math.min(farmTiles, field.farms.length), 'farm');
+  develop(field.markets, Math.min(marketTiles, field.markets.length), 'market', 6);
 
   let uid = 0;
   const anchor = edgeAnchor(edge);
@@ -232,6 +369,9 @@ export function createBattle(state, { pid, from, walls, att, def, humanSides }) 
     const spot = isCmd ? { ...b.castle } : freeHexNear(b, b.castle.c, b.castle.r, (c, r) => edgeDistance(edge, c, r) > 3);
     b.units.push(makeUnit(uid++, 'def', o, spot, isCmd));
   }
+  autoDeploy(state, b);
+  // A player defending gets to place their units before the first day.
+  b.deploying = !!b.humanSides.def;
   addLog(b, `Day 1. The attackers arrive from the ${edge}. The wind blows from the ${WIND_NAMES[b.wind]}.`);
   return b;
 }
@@ -377,9 +517,45 @@ export function canAssault(b, u) {
   return hexDist(u, b.castle) === 1;
 }
 
+// An orderly withdrawal is only possible from the map edge: attackers leave by
+// the edge they came in on, defenders by any other edge if a friendly
+// province lies beyond.
 export function canRetreat(b, u, state, retreatOptions) {
-  if (u.side === 'att') return true;
-  return retreatOptions?.def ?? false;
+  if (u.side === 'att') return edgeDistance(b.edge, u.c, u.r) <= 1;
+  const onBorder = u.c === 0 || u.r === 0 || u.c === BATTLE_W - 1 || u.r === BATTLE_H - 1;
+  return (retreatOptions?.def ?? false) && onBorder && edgeDistance(b.edge, u.c, u.r) > 1;
+}
+
+// ---- Razing ------------------------------------------------------------------
+
+// What razing a developed tile yields: grain for the raiding army's supplies,
+// or gold carried off by the unit.
+export const RAZE_YIELD = { farm: { food: 150 }, market: { gold: 40 } };
+
+export const siteAt = (b, c, r) => b.sites?.[idx(c, r)] ?? null;
+
+// A unit that started its turn on a developed field or market may raze it.
+export function canRaze(b, u) {
+  if (u.side !== 'att' || u.done || u.moved || isShaken(b, u)) return false;
+  const site = siteAt(b, u.c, u.r);
+  return !!site && !site.razed;
+}
+
+export function doRaze(state, b, u) {
+  if (!canRaze(b, u)) return false;
+  const site = siteAt(b, u.c, u.r);
+  site.razed = true;
+  u.done = true;
+  u.razes = (u.razes || 0) + 1;
+  b.razed[site.kind] += 1;
+  if (site.kind === 'farm') {
+    b.attFood += RAZE_YIELD.farm.food;
+    addLog(b, `${officer(state, u).name}'s men burn the fields and seize ${RAZE_YIELD.farm.food} grain.`);
+  } else {
+    u.loot = (u.loot || 0) + RAZE_YIELD.market.gold;
+    addLog(b, `${officer(state, u).name}'s men sack a market and carry off ${RAZE_YIELD.market.gold} gold.`);
+  }
+  return true;
 }
 
 // Does this unit still have anything it could do this phase?
@@ -504,6 +680,11 @@ function defeatUnit(state, b, u, how) {
   u.troops = how === 'routed' ? Math.round(u.troops * 0.4) : 0;
   const pCapture = clamp(0.45 - o.war / 400, 0.15, 0.45);
   u.captured = chance(state, pCapture);
+  // A broken unit loses its plunder; if its officer is taken, the defenders get it back.
+  if (u.loot) {
+    if (u.captured) b.recovered = (b.recovered || 0) + u.loot;
+    u.loot = 0;
+  }
   addLog(b, `${o.name}'s unit is ${how}!${u.captured ? ` ${o.name} is taken prisoner.` : ` ${o.name} escapes the field.`}`);
   checkVictory(state, b);
 }
@@ -722,11 +903,12 @@ export function doWait(b, u) {
 }
 
 export function doRetreat(state, b, u) {
+  if (!canRetreat(b, u, state, b.retreatOptions)) return false;
   u.status = 'retreated';
   u.done = true;
-  u.troops = Math.round(u.troops * 0.85);
-  addLog(b, `${officer(state, u).name} withdraws from the field.`);
+  addLog(b, `${officer(state, u).name} withdraws from the field in good order${u.loot ? `, carrying ${u.loot} gold` : ''}.`);
   checkVictory(state, b);
+  return true;
 }
 
 // ---- Flow ------------------------------------------------------------------
@@ -734,6 +916,16 @@ export function doRetreat(state, b, u) {
 function endBattle(b, winner, reason) {
   if (b.result) return;
   b.result = { winner, reason };
+  // Units left on the field when their commander goes: covered by an orderly
+  // withdrawal they fall back with light losses; after a rout they scatter.
+  for (const side of ['att', 'def']) {
+    const how = b.fallback?.[side];
+    if (!how) continue;
+    for (const u of activeUnits(b, side)) {
+      u.troops = Math.round(u.troops * (how === 'orderly' ? 0.9 : 0.6));
+      if (how === 'rout') u.loot = 0;
+    }
+  }
   addLog(b, reason);
 }
 
@@ -743,9 +935,17 @@ export function checkVictory(state, b) {
     const cmd = b.units.find((u) => u.side === side && u.commander);
     const alive = activeUnits(b, side);
     const who = side === 'att' ? 'attacking' : 'defending';
-    if (!alive.length) return endBattle(b, enemyOf(side), `The ${who} army has been wiped out.`);
+    if (cmd && cmd.status === 'retreated') {
+      b.fallback = { ...(b.fallback || {}), [side]: 'orderly' };
+      return endBattle(b, enemyOf(side), `The ${who} commander ${officer(state, cmd).name} withdraws in good order; the army falls back.`);
+    }
     if (cmd && cmd.status !== 'active') {
-      return endBattle(b, enemyOf(side), `The ${who} commander ${officer(state, cmd).name} has left the field — the army collapses.`);
+      b.fallback = { ...(b.fallback || {}), [side]: 'rout' };
+      return endBattle(b, enemyOf(side), `The ${who} commander ${officer(state, cmd).name} is broken — the army routs.`);
+    }
+    if (!alive.length) {
+      const left = b.units.some((u) => u.side === side && u.status === 'retreated');
+      return endBattle(b, enemyOf(side), left ? `The ${who} army has withdrawn from the field.` : `The ${who} army has been wiped out.`);
     }
   }
 }
@@ -932,16 +1132,22 @@ function goalFor(state, b, u) {
     return nearest(field.length ? field : enemies) || b.castle;
   }
   if (u.commander) return b.castle;
-  const threats = enemies.filter((e) => hexDist(e, b.castle) <= 5);
+  // Enemies near the castle or loose among the fields are the ones to stop.
+  const threats = enemies.filter((e) => hexDist(e, b.castle) <= 5 || siteAt(b, e.c, e.r));
   return nearest(threats.length ? threats : enemies) || b.castle;
 }
 
 // Walking cost from every hex to the goal for this kind of unit, going round
 // rivers and through fords (units are ignored; they move).
-function travelField(b, u, goal) {
+export function travelField(b, u, goal) {
+  const goals = Array.isArray(goal) ? goal : [goal];
+  const isGoal = (c, r) => goals.some((g) => g.c === c && g.r === r);
   const dist = new Array(BATTLE_W * BATTLE_H).fill(Infinity);
-  dist[idx(goal.c, goal.r)] = 0;
-  const frontier = [{ c: goal.c, r: goal.r, d: 0 }];
+  const frontier = [];
+  for (const g of goals) {
+    dist[idx(g.c, g.r)] = 0;
+    frontier.push({ c: g.c, r: g.r, d: 0 });
+  }
   while (frontier.length) {
     frontier.sort((a, z) => a.d - z.d);
     const cur = frontier.shift();
@@ -950,7 +1156,7 @@ function travelField(b, u, goal) {
     const here = TERRAIN[terrainAt(b, cur.c, cur.r)].cost;
     const step = here ? here[u.type] : Infinity;
     for (const n of neighbors(cur.c, cur.r)) {
-      const nd = cur.d + (isCastle(b, cur.c, cur.r) && !(cur.c === goal.c && cur.r === goal.r) ? Infinity : step);
+      const nd = cur.d + (isCastle(b, cur.c, cur.r) && !isGoal(cur.c, cur.r) ? Infinity : step);
       const ter = TERRAIN[terrainAt(b, n.c, n.r)];
       if (!ter.cost || nd >= dist[idx(n.c, n.r)]) continue;
       dist[idx(n.c, n.r)] = nd;
@@ -964,7 +1170,8 @@ function travelField(b, u, goal) {
 function positionScore(state, b, u, node, goal, field) {
   const ter = terrainAt(b, node.c, node.r);
   const walk = field[idx(node.c, node.r)];
-  let s = (Number.isFinite(walk) ? walk : hexDist(node, goal) * 3 + 30) * 5 + node.cost;
+  const g = Array.isArray(goal) ? goal[0] : goal;
+  let s = (Number.isFinite(walk) ? walk : hexDist(node, g) * 3 + 30) * 5 + node.cost;
   const nearestEnemy = activeUnits(b, enemyOf(u.side)).reduce((m, e) => Math.min(m, hexDist(node, e)), 99);
   if (u.type === 'arc') {
     if (nearestEnemy === 1) s += 12;
@@ -982,6 +1189,9 @@ function positionScore(state, b, u, node, goal, field) {
   if (u.side === 'att' && !isBreached(b) && u.type !== 'cav' && hexDist(node, b.castle) === 1) s -= 15;
   if (u.side === 'att' && !isBreached(b) && hexDist(node, b.castle) <= GARRISON_RANGE) s += u.type === 'cav' ? 20 : 0;
   if (u.side === 'def' && hexDist(node, b.castle) > 4) s += 30;
+  // Attackers are drawn to developed land they can burn; defenders to land they must protect.
+  const site = siteAt(b, node.c, node.r);
+  if (site && !site.razed) s -= u.side === 'att' && !u.commander ? 6 : 3;
   // The attacking commander stays out of the garrison's reach until the castle is open.
   if (u.side === 'att' && u.commander && !(isBreached(b) && !castleOccupant(b))) {
     const d = hexDist(node, b.castle);
@@ -992,16 +1202,23 @@ function positionScore(state, b, u, node, goal, field) {
 
 // One AI unit acts. Returns false if no unit was left to act.
 export function aiStep(state, b) {
-  if (b.result || b.pendingDuel) return false;
+  if (b.result || b.pendingDuel || b.deploying) return false;
   const u = activeUnits(b, b.side).find((x) => !x.done);
   if (!u) return false;
   const o = officer(state, u);
 
   // Badly mauled units pull back rather than die.
-  if (!u.commander && u.troops < u.startTroops * 0.12 && u.troops < 800 && canRetreat(b, u, state, b.retreatOptions)) {
+  const mauled = !u.commander && u.troops < u.startTroops * 0.12 && u.troops < 800;
+  if (mauled && canRetreat(b, u, state, b.retreatOptions)) {
     doRetreat(state, b, u);
     return true;
   }
+  // Raiders burn what they stand on when nobody is in the way.
+  if (canRaze(b, u) && !meleeTargets(b, u).length) {
+    doRaze(state, b, u);
+    return true;
+  }
+  if (u.side === 'att' && b.intent === 'raid') return raidStep(state, b, u);
   if (tryDuel(state, b, u)) return true;
   const fires = fireTargets(b, u).filter((n) => unitAt(b, n.c, n.r));
   if (fires.length && o.int >= 75 && chance(state, 0.4)) {
@@ -1010,7 +1227,7 @@ export function aiStep(state, b) {
     return true;
   }
   // Only strike when the exchange favours us; a commander in particular should
-  // not bleed his army against a stronger position.
+  // not bleed their army against a stronger position.
   let atk = bestAttack(state, b, u);
   if (atk && (atk.kind !== 'melee' || atk.s > 0)) {
     perform(state, b, u, atk);
@@ -1024,7 +1241,8 @@ export function aiStep(state, b) {
   }
 
   // Move: toward the goal, preferring hexes from which we can strike.
-  const goal = goalFor(state, b, u);
+  // A mauled attacker falls back toward its own edge to get away in good order.
+  const goal = mauled && u.side === 'att' ? homeHexes(b) : goalFor(state, b, u);
   const holdCastle = u.side === 'def' && u.commander;
   if (!holdCastle && !u.moved) {
     const reach = reachable(b, u);
@@ -1056,11 +1274,75 @@ export function aiStep(state, b) {
   return true;
 }
 
+// Hexes from which the attackers can withdraw: their arrival strip.
+function homeHexes(b) {
+  const out = [];
+  for (let r = 0; r < BATTLE_H; r++) {
+    for (let c = 0; c < BATTLE_W; c++) {
+      if (edgeDistance(b.edge, c, r) <= 1 && TERRAIN[terrainAt(b, c, r)].cost) out.push({ c, r });
+    }
+  }
+  return out;
+}
+
+// A raider burns what it can reach and gets home before it is caught: it heads
+// back to its edge once laden, hurt, or when the raid has run long; the leader
+// leaves last.
+function raidStep(state, b, u) {
+  const others = activeUnits(b, 'att').filter((x) => x !== u);
+  const homeward = (u.razes || 0) >= 2 || u.troops < u.startTroops * 0.6 || b.day >= 8
+    || (u.commander && others.length === 0 && b.day > 1);
+  if (homeward && (!u.commander || !others.length)) {
+    if (canRetreat(b, u, state, b.retreatOptions)) {
+      doRetreat(state, b, u);
+      return true;
+    }
+  }
+  // Only fight when it clearly pays.
+  const atk = bestAttack(state, b, u);
+  if (atk && (atk.kind === 'shoot' || (atk.kind === 'charge' && atk.s > 0))) {
+    perform(state, b, u, atk);
+    return true;
+  }
+  if (!u.moved) {
+    let goal = homeHexes(b);
+    if (!homeward) {
+      const targets = [];
+      for (let r = 0; r < BATTLE_H; r++) {
+        for (let c = 0; c < BATTLE_W; c++) {
+          const site = siteAt(b, c, r);
+          if (!site || site.razed || unitAt(b, c, r) || hexDist({ c, r }, b.castle) <= GARRISON_RANGE) continue;
+          if (enemyAdjacent(b, c, r, 'att')) continue;
+          targets.push({ c, r, k: hexDist(u, { c, r }) + (site.kind === 'market' ? -1 : 0) });
+        }
+      }
+      targets.sort((a, z) => a.k - z.k);
+      if (targets.length) goal = targets[0];
+    }
+    const field = travelField(b, u, goal);
+    let best = null;
+    for (const node of reachable(b, u).values()) {
+      let s = field[idx(node.c, node.r)] * 5 + node.cost;
+      if (enemyAdjacent(b, node.c, node.r, 'att')) s += 8;
+      if (hexDist(node, b.castle) <= GARRISON_RANGE) s += 40;
+      if (!best || s < best.s) best = { node, s };
+    }
+    if (best && (best.node.c !== u.c || best.node.r !== u.r)) doMove(state, b, u, best.node.c, best.node.r);
+    if (homeward && canRetreat(b, u, state, b.retreatOptions) && (!u.commander || !others.length)) {
+      doRetreat(state, b, u);
+      return true;
+    }
+  }
+  doWait(b, u);
+  return true;
+}
+
 export function runAIPhase(state, b) {
   while (!b.result && aiStep(state, b));
 }
 
 export function autoResolve(state, b) {
+  b.deploying = false;
   let guard = 0;
   while (!b.result && guard++ < 200) {
     runAIPhase(state, b);

@@ -5,8 +5,11 @@ import { newGameStart, advance, playerCommand, concludeBattle } from '../src/eng
 import { ADJACENT } from '../src/engine/map.js';
 import {
   createBattle, doMove, reachable, autoResolve, idx, hexDist, neighbors, isBreached, canAssault, doAssault,
-  provinceField, approachEdge,
+  provinceField, approachEdge, siteAt, canRaze, doRaze, canDeployAt, deployUnit, canRetreat, doRetreat,
+  inArrivalStrip, BATTLE_W, BATTLE_H, RAZE_YIELD,
 } from '../src/engine/battle.js';
+import { finishBattle } from '../src/engine/war.js';
+import { checkVictory as checkVictoryFor } from '../src/engine/battle.js';
 import { devGain } from '../src/engine/economy.js';
 
 test('every province has at least one neighbour and adjacency is symmetric', () => {
@@ -333,4 +336,107 @@ test('refusing a duel costs morale across the army; a second refusal breaks the 
   doDuel(state, b, a, d);
   answerPendingDuel(state, b, false);
   assert.ok(d.shakenDay >= b.day, 'twice refused, the unit loses heart');
+});
+
+function raid(state, { farmTiles = 6, marketTiles = 3, raiders = 2, humanSides } = {}) {
+  const att = ['xiahou-yuan', 'xiahou-dun', 'cao-ren'].slice(0, raiders).map((officer) => ({ officer, troops: 3000, training: 70, unit: 'cav' }));
+  return createBattle(state, {
+    pid: 'xuchang', from: 'chenliu', walls: 50, farmTiles, marketTiles, intent: 'raid', humanSides,
+    att: { force: 'cao-cao', officers: att, commander: 'xiahou-yuan', food: 500 },
+    def: { force: 'yuan-shu', officers: [{ officer: 'ji-ling', troops: 3000, training: 50, unit: 'inf' }, { officer: 'yuan-yin', troops: 2000, training: 50, unit: 'arc' }], commander: 'ji-ling', food: 500 },
+  });
+}
+
+const sitesOf = (b, kind) => {
+  const out = [];
+  for (let r = 0; r < BATTLE_H; r++) for (let c = 0; c < BATTLE_W; c++) if (siteAt(b, c, r)?.kind === kind) out.push({ c, r });
+  return out;
+};
+
+test('the battlefield shows exactly as many fields and markets as the province has developed', () => {
+  const state = createGame({ seed: 7 });
+  const b = raid(state, { farmTiles: 7, marketTiles: 4 });
+  assert.equal(sitesOf(b, 'farm').length, 7);
+  assert.equal(sitesOf(b, 'market').length, 4);
+  // The first markets ring the castle.
+  for (const m of sitesOf(b, 'market')) assert.ok(hexDist(m, b.castle) <= 2);
+});
+
+test('only a unit that started its turn on a developed tile can raze it, and razing yields plunder', () => {
+  const state = createGame({ seed: 7 });
+  const b = raid(state);
+  const u = b.units.find((x) => x.side === 'att');
+  const farm = sitesOf(b, 'farm').find((h) => !b.units.some((x) => x.c === h.c && x.r === h.r));
+  Object.assign(u, { c: farm.c, r: farm.r, moved: true, done: false });
+  assert.equal(canRaze(b, u), false, 'moved this turn');
+  u.moved = false;
+  assert.equal(canRaze(b, u), true);
+  const food = b.attFood;
+  assert.ok(doRaze(state, b, u));
+  assert.equal(b.attFood, food + RAZE_YIELD.farm.food);
+  assert.equal(b.razed.farm, 1);
+  assert.equal(canRaze(b, { ...u, done: false }), false, 'already razed');
+
+  const v = b.units.filter((x) => x.side === 'att')[1];
+  const market = sitesOf(b, 'market').find((h) => !b.units.some((x) => x.c === h.c && x.r === h.r));
+  Object.assign(v, { c: market.c, r: market.r, moved: false, done: false });
+  assert.ok(doRaze(state, b, v));
+  assert.equal(v.loot, RAZE_YIELD.market.gold);
+});
+
+test('razed tiles cost the province a tile of development each', () => {
+  const state = createGame({ seed: 7 });
+  const dst = state.provinces.xuchang;
+  const before = { farm: dst.farm, commerce: dst.commerce };
+  const b = raid(state);
+  b.razed = { farm: 2, market: 1 };
+  b.result = { winner: 'def', reason: 'test' };
+  finishBattle(state, b);
+  assert.equal(dst.farm, Math.max(0, before.farm - 50));
+  assert.equal(dst.commerce, Math.max(0, before.commerce - 60));
+});
+
+test('defenders deploy anywhere but the attackers\' approach; the commander holds the castle', () => {
+  const state = createGame({ seed: 7 });
+  const b = raid(state, { humanSides: { def: true } });
+  assert.ok(b.deploying);
+  const cmd = b.units.find((u) => u.side === 'def' && u.commander);
+  assert.deepEqual({ c: cmd.c, r: cmd.r }, { c: b.castle.c, r: b.castle.r });
+  assert.equal(canDeployAt(b, cmd, 7, 2), false);
+  const u = b.units.find((x) => x.side === 'def' && !x.commander);
+  const near = b.edge === 'west' ? [0, 1, 2] : [BATTLE_W - 1, BATTLE_W - 2, BATTLE_W - 3];
+  for (const c of near) assert.equal(canDeployAt(b, u, c, 5), false, `column ${c}`);
+  // Auto-deployment only uses legal hexes.
+  assert.ok(canDeployAt(b, u, u.c, u.r));
+  const far = b.edge === 'west' ? BATTLE_W - 1 : 0;
+  const r = [...Array(BATTLE_H).keys()].find((y) => canDeployAt(b, u, far, y));
+  assert.ok(deployUnit(b, u, far, r));
+  assert.equal(u.c, far);
+});
+
+test('attackers withdraw freely from their own edge; a routed commander scatters the rest', () => {
+  const state = createGame({ seed: 7 });
+  let b = raid(state);
+  let [cmd, other] = b.units.filter((u) => u.side === 'att');
+  const edgeCol = b.edge === 'west' ? 0 : BATTLE_W - 1;
+  const inner = b.edge === 'west' ? 5 : BATTLE_W - 6;
+  Object.assign(cmd, { c: inner, r: 5 });
+  assert.equal(canRetreat(b, cmd, state, b.retreatOptions), false);
+  Object.assign(cmd, { c: edgeCol, r: 5 });
+  assert.ok(inArrivalStrip(cmd.c));
+  other.loot = 40;
+  other.troops = 3000;
+  assert.ok(doRetreat(state, b, cmd));
+  assert.equal(b.result.winner, 'def');
+  assert.equal(cmd.troops, 3000, 'orderly withdrawal costs nothing');
+  assert.equal(other.troops, 2700);
+  assert.equal(other.loot, 40);
+
+  b = raid(state);
+  [cmd, other] = b.units.filter((u) => u.side === 'att');
+  other.loot = 40;
+  cmd.status = 'routed';
+  checkVictoryFor(state, b);
+  assert.equal(other.troops, 1800);
+  assert.equal(other.loot, 0);
 });

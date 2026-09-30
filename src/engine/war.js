@@ -7,6 +7,7 @@ import {
 } from './state.js';
 import { ADJACENT, isAdjacent } from './map.js';
 import { createBattle, autoResolve } from './battle.js';
+import { tilesOf, TILE_VALUE } from './economy.js';
 import { handleRulerLoss, eliminateForce } from './succession.js';
 
 export const MAX_ARMY = 10;
@@ -44,7 +45,7 @@ export function validateWar(state, { from, to, officerIds, food }) {
 
 // Starts a war. Returns { kind: 'captured' } when the province falls without a
 // fight, or { kind: 'battle', battle } for a battle that still has to be fought.
-export function declareWar(state, { from, to, officerIds, commanderId, food }, { interactiveAttacker = false } = {}) {
+export function declareWar(state, { from, to, officerIds, commanderId, food, intent = 'conquer' }, { interactiveAttacker = false } = {}) {
   const src = state.provinces[from];
   const dst = state.provinces[to];
   const fa = src.owner;
@@ -79,9 +80,15 @@ export function declareWar(state, { from, to, officerIds, commanderId, food }, {
     att: { force: fa, officers: attackers.map(sideEntry), commander: commanderId || attackers[0].id, food },
     def: { force: fd, officers: defenders.map(sideEntry), commander: defCmd.id, food: dst.food },
     humanSides: { att: interactiveAttacker, def: humanDef },
+    intent,
+    farmTiles: tilesOf(dst, 'farm'),
+    marketTiles: tilesOf(dst, 'commerce'),
   });
   battle.retreatOptions = { def: !!friendlyRefuge(state, fd, to) };
-  log(state, `${forceName(state, fa)} attacks ${dst.name} (${forceName(state, fd)})!`, 'war', [fa, fd]);
+  if (intent === 'raid') dst.raidedAt = monthIndex(state);
+  log(state, intent === 'raid'
+    ? `${forceName(state, fa)} sends raiders into ${dst.name} (${forceName(state, fd)})!`
+    : `${forceName(state, fa)} attacks ${dst.name} (${forceName(state, fd)})!`, 'war', [fa, fd]);
   return { kind: 'battle', battle };
 }
 
@@ -147,6 +154,20 @@ function takeCaptives(state, captor, pid, captives) {
   return { captives: held };
 }
 
+// Razed fields and markets cost the province a tile's worth of development
+// each, unsettle the people and drive some of them away.
+function applyDevastation(state, b, dst) {
+  const { farm, market } = b.razed || { farm: 0, market: 0 };
+  const total = farm + market;
+  if (!total) return;
+  dst.farm = Math.max(0, dst.farm - farm * TILE_VALUE.farm);
+  dst.commerce = Math.max(0, dst.commerce - market * TILE_VALUE.commerce);
+  dst.order = clamp(dst.order - 2 * total, 0, 100);
+  dst.pop = Math.round(dst.pop * (1 - 0.005 * total));
+  const parts = [farm ? `${farm} field${farm > 1 ? 's' : ''}` : null, market ? `${market} market${market > 1 ? 's' : ''}` : null].filter(Boolean);
+  log(state, `${parts.join(' and ')} of ${dst.name} lie in ruins.`, 'disaster', [b.forces.att, b.forces.def].filter(Boolean));
+}
+
 export function finishBattle(state, b) {
   const { winner, reason } = b.result;
   const fa = b.forces.att;
@@ -173,6 +194,16 @@ export function finishBattle(state, b) {
   }
   // Damage done to the walls stays with the province, whoever holds it now.
   dst.walls = Math.max(0, Math.round(b.walls));
+  applyDevastation(state, b, dst);
+  // Plunder carried off the field goes home with the raiders; gold taken back
+  // from captured raiders returns to the province.
+  const loot = b.units.filter((u) => u.side === 'att' && !u.slain && !u.captured).reduce((sum, u) => sum + (u.loot || 0), 0);
+  if (loot) {
+    const home = winner === 'att' ? dst : src;
+    home.gold += loot;
+    log(state, `${forceName(state, fa)}'s troops carry ${loot} gold of plunder home from ${dst.name}.`, 'war', [fa, fd]);
+  }
+  if (b.recovered) dst.gold += b.recovered;
   const survivors = (side) => b.units.filter((u) => u.side === side && !u.slain && !u.captured).map((u) => state.officers[u.officer]);
   const summary = `${forceName(state, winner === 'att' ? fa : fd)} is victorious at ${dst.name}. ${reason}`;
   log(state, summary, 'war', [fa, fd]);

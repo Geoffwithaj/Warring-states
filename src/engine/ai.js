@@ -4,10 +4,10 @@
 import { chance, pick } from './rng.js';
 import {
   officersIn, idleOfficersIn, usedThisMonth, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
-  capitalOf, rulerOf, troopCap,
+  capitalOf, rulerOf, troopCap, monthIndex,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
-import { DEV_FIELDS, fieldMax, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
+import { DEV_FIELDS, fieldMax, tilesOf, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
 import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
 
@@ -89,9 +89,46 @@ function planAttack(state, pid, fid, directive) {
     const value = (prov.pop / 1000 + prov.farm + prov.commerce) / (defStr / 1000 + 5);
     if (!best || value > best.value) best = { t, value };
   }
-  if (!best) return null;
+  if (!best) return planRaid(state, pid, fid, hostile);
   const commander = bestBy(army, (o) => o.war + o.cha / 2 + (o.id === state.forces[fid].ruler ? 50 : 0));
   return { type: 'war', args: { to: best.t, officers: army.map((o) => o.id), commander: commander.id, food } };
+}
+
+// When a neighbour is too strong to conquer, a small fast party can still
+// burn its fields and sack its markets, above all before the harvest.
+function planRaid(state, pid, fid, hostile) {
+  const beforeHarvest = state.month >= 3 && state.month <= 7;
+  const force = state.forces[fid];
+  const now = monthIndex(state);
+  // A lord mounts a raid at most every half year, mostly before the harvest.
+  if (now - (force.lastRaid ?? -99) < 6) return null;
+  if (!chance(state, beforeHarvest ? 0.15 : 0.03)) return null;
+  const here = officersIn(state, pid);
+  if (here.length < 3) return null;
+  const gov = governorOf(state, pid);
+  const ruler = state.forces[fid].ruler;
+  const raiders = idleOfficersIn(state, pid)
+    .filter((o) => o.id !== gov?.id && o.id !== ruler && o.troops >= 1500)
+    .sort((a, z) => (z.unit === 'cav') - (a.unit === 'cav') || strengthOf(z) - strengthOf(a))
+    .slice(0, 2);
+  if (!raiders.length) return null;
+  const raidStr = raiders.reduce((s, o) => s + strengthOf(o), 0);
+  let best = null;
+  for (const t of hostile) {
+    const prov = state.provinces[t];
+    const defenders = officersIn(state, t).filter((o) => o.troops > 0);
+    const strongest = defenders.reduce((m, o) => Math.max(m, strengthOf(o)), 0);
+    if (strongest > raidStr * 1.2) continue;
+    if (now - (prov.raidedAt ?? -99) < 12) continue; // still recovering from the last one
+    const value = tilesOf(prov, 'farm') + tilesOf(prov, 'commerce') * 0.5 - defenders.length * 2;
+    if (value > 7 && (!best || value > best.value)) best = { t, value };
+  }
+  if (!best) return null;
+  const troops = raiders.reduce((s, o) => s + o.troops, 0);
+  const food = Math.min(state.provinces[pid].food, Math.ceil(foodNeeded(troops) / 2));
+  const commander = bestBy(raiders, (o) => o.war + o.cha / 2);
+  force.lastRaid = now;
+  return { type: 'war', args: { to: best.t, officers: raiders.map((o) => o.id), commander: commander.id, food, intent: 'raid' } };
 }
 
 function planDraft(state, pid, fid, directive, frontier) {
