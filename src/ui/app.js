@@ -280,8 +280,11 @@ async function playAction(r) {
       : `${who} attacks ${target} from ${state.provinces[from].name} — ${forceName(state, defender)} holds.`;
     ms = defender ? sp.war : sp.gov;
     if (ms) map.showArrow(from, to, winner === 'att' ? '#ffe08a' : '#ff8a7a');
-  } else if (humans.has(r.owner) && r.action.type !== 'rest') {
-    msg = `${state.provinces[r.pid].name}: ${r.msg}`;
+  } else if (humans.has(r.owner) && r.msgs.length) {
+    // A delegated province may give several orders; show them together.
+    const shown = r.msgs.slice(0, 3).join(' ');
+    const more = r.msgs.length > 3 ? ` (+${r.msgs.length - 3} more in the chronicle)` : '';
+    msg = `${state.provinces[r.pid].name}: ${shown}${more}`;
     ms = sp.gov;
     if (ms) map.pulse(r.pid);
   }

@@ -178,3 +178,21 @@ test('a drill master trains the whole garrison, less effectively when it is larg
   const after = officersIn(state, 'chenliu').map((o) => o.training);
   assert.ok(after.every((t, i) => t >= before[i]) && after.some((t, i) => t > before[i]), 'every unit is drilled');
 });
+
+test('turn steps report every order a computer-run province gave', async () => {
+  const { step } = await import('../src/engine/turn.js');
+  const state = createGame({ humanRulers: ['liu-bei'], seed: 8 });
+  newGameStart(state);
+  for (const p of provincesOf(state, 'liu-bei')) p.delegate = { directive: 'balanced' };
+  let delegatedSteps = 0;
+  for (let i = 0; i < 400; i++) {
+    const r = step(state);
+    if (r.type === 'acted') {
+      assert.ok(Array.isArray(r.actions) && Array.isArray(r.msgs), 'acted steps list actions and messages');
+      assert.equal(r.actions.length, r.msgs.length);
+      if (r.owner === 'liu-bei') delegatedSteps++;
+    }
+    if (['battle', 'captives', 'gameover'].includes(r.type)) break;
+  }
+  assert.ok(delegatedSteps > 0, 'the delegated province took turns');
+});
