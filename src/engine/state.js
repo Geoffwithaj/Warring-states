@@ -174,8 +174,11 @@ export const officerList = (state) => Object.values(state.officers);
 export const officersIn = (state, pid) =>
   officerList(state).filter((o) => o.status === 'serving' && o.province === pid);
 
-// Each officer can carry out one assignment per month.
-export const isIdle = (state, o) => o.usedMonth !== state.year * 12 + state.month - 1;
+// Each officer can carry out one job per month: either an order given in the
+// province's turn, or their standing assignment (which runs at month end, so
+// clearing it frees the officer for orders the same turn).
+export const usedThisMonth = (state, o) => o.usedMonth === state.year * 12 + state.month - 1;
+export const isIdle = (state, o) => !o.task && !usedThisMonth(state, o);
 export const idleOfficersIn = (state, pid) => officersIn(state, pid).filter((o) => isIdle(state, o));
 
 export const captivesIn = (state, pid) =>

@@ -196,3 +196,26 @@ test('turn steps report every order a computer-run province gave', async () => {
   }
   assert.ok(delegatedSteps > 0, 'the delegated province took turns');
 });
+
+test('standing assignments are the officer\'s job for the month and can be cleared to free them', async () => {
+  const { setTask } = await import('../src/engine/commands.js');
+  const { endOfMonth } = await import('../src/engine/economy.js');
+  const state = createGame({ humanRulers: ['cao-cao'], seed: 6 });
+  newGameStart(state);
+  advance(state);
+  setTask(state, 'xiahou-dun', 'train');
+  const busy = playerCommand(state, 'develop', { field: 'farm', officer: 'xiahou-dun', gold: 20 });
+  assert.equal(busy.ok, false, 'an officer on standing orders is busy');
+  assert.match(busy.msg, /standing orders/);
+  setTask(state, 'xiahou-dun', null);
+  assert.ok(playerCommand(state, 'develop', { field: 'farm', officer: 'xiahou-dun', gold: 20 }).ok, 'clearing the assignment frees him this turn');
+
+  // An officer given orders this month skips their assignment at month end.
+  setTask(state, 'xiahou-dun', 'walls');
+  const walls = state.provinces.chenliu.walls;
+  const gold = state.provinces.chenliu.gold;
+  for (const o of officersIn(state, 'chenliu')) if (o.id !== 'xiahou-dun') o.task = null;
+  endOfMonth(state);
+  assert.equal(state.provinces.chenliu.walls, walls);
+  assert.ok(state.provinces.chenliu.gold >= gold, 'no stipend was paid');
+});

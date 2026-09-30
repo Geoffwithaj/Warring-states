@@ -2,7 +2,7 @@
 
 import { h, fmt, bar, select } from './dom.js';
 import {
-  officersIn, idleOfficersIn, isIdle, captivesIn, freeOfficersIn, forceName, governorOf, troopsIn, capitalOf, age, areAllied,
+  officersIn, idleOfficersIn, usedThisMonth, captivesIn, freeOfficersIn, forceName, governorOf, troopsIn, capitalOf, age, areAllied,
 } from '../engine/state.js';
 import { TAX, TASKS, TASK_COST, monthlyGold, harvestFood, foodUpkeep, HARVEST_MONTH, popCap } from '../engine/economy.js';
 import { DIRECTIVES } from '../engine/ai.js';
@@ -51,7 +51,7 @@ export function renderProvincePanel(el, ctx) {
       h('b', {}, `Orders for ${p.name}`),
       h('div', { style: { color: '#e8dcb8' } }, `${free.length} of ${all.length} officers still free this month.`),
       h('div', { class: 'hint', style: { color: '#e8dcb8' } },
-        'Give as many orders as you like — each officer can take one job a month. War ends the province\u2019s turn. Management settings are free.')));
+        'Give as many orders as you like — each officer can take one job a month. Officers on standing assignments are busy; set their assignment to — to use them this turn. War ends the province\u2019s turn.')));
     const cmd = (label, type, title) => h('button', { onclick: () => ctx.openCommand(type), title }, label);
     el.append(h('div', { class: 'commands' },
       cmd('Develop', 'develop', 'Invest gold in farmland, commerce, dikes or walls; give relief'),
@@ -132,7 +132,7 @@ function managementSection(ctx, p) {
       select(directiveOpts, p.delegate?.directive || '', refresh((v) => setDelegate(state, pid, v || null))),
     ),
     p.delegate ? h('p', { class: 'hint' }, `${DIRECTIVES[p.delegate.directive].desc} The governor also sets officer assignments each month.`) : null,
-    h('p', { class: 'hint' }, `Standing assignments cost ${TASK_COST} gold per officer each month and run in addition to the province's command.`),
+    h('p', { class: 'hint' }, `A standing assignment is that officer\u2019s job every month (${TASK_COST} gold each, paid at month end). It is skipped in any month the officer is given other orders.`),
   );
 }
 
@@ -147,7 +147,7 @@ function officerTable(ctx, officers, mine) {
         : h('span', { class: 'muted' }, o.task ? TASKS[o.task] : '—');
       return h('tr', { class: 'clickable', onclick: (e) => { if (e.target.tagName !== 'SELECT') ctx.showOfficer(o.id); } },
         h('td', {}, o.name, o.id === f?.ruler ? h('span', { class: 'tag gold' }, 'Lord') : null,
-          mine && !isIdle(state, o) ? h('span', { class: 'tag', title: 'Already has orders this month' }, 'Busy') : null),
+          mine && usedThisMonth(state, o) ? h('span', { class: 'tag', title: 'Already has orders this month' }, 'Busy') : null),
         h('td', { class: 'n' }, o.int), h('td', { class: 'n' }, o.war), h('td', { class: 'n' }, o.cha),
         h('td', { class: 'n' }, fmt(o.troops)),
         h('td', { class: 'n' }, o.training),

@@ -3,7 +3,7 @@
 
 import { chance, pick } from './rng.js';
 import {
-  officersIn, idleOfficersIn, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
+  officersIn, idleOfficersIn, usedThisMonth, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
   capitalOf, rulerOf, troopCap,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
@@ -244,9 +244,12 @@ export function planProvinceTurn(state, pid, directive, { isAI, skip = new Set()
 }
 
 // Standing assignments for officers of a computer-run province.
+// Officers left without orders after the province's turn get standing
+// assignments, within a budget of about half the monthly income.
 export function autoAssignTasks(state, pid, directive) {
   const p = state.provinces[pid];
-  const here = officersIn(state, pid);
+  for (const o of officersIn(state, pid)) if (usedThisMonth(state, o)) o.task = null;
+  const here = officersIn(state, pid).filter((o) => !usedThisMonth(state, o));
   const budget = Math.max(0, Math.floor(monthlyGold(p) / (TASK_COST * 2)));
   let n = 0;
   const sorted = [...here].sort((a, b) => b.int + b.cha - (a.int + a.cha));

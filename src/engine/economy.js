@@ -4,7 +4,7 @@ import { clamp, chance, randInt, rand, pick } from './rng.js';
 import { ADJACENT } from './map.js';
 import {
   officersIn, provincesOf, capitalOf, log, age, officerList, forceName, isFamily, governorOf,
-  troopCap, monthIndex, applyDebuts, enlist,
+  troopCap, monthIndex, applyDebuts, enlist, usedThisMonth,
 } from './state.js';
 import { handleRulerLoss } from './succession.js';
 
@@ -87,7 +87,8 @@ export function maxDraft(state, pid, o) {
 // stipend, independent of the orders given in the province's turn.
 function applyTasks(state, p) {
   for (const o of officersIn(state, p.id)) {
-    if (!o.task) continue;
+    // An officer who was given orders this month has no time for their assignment.
+    if (!o.task || usedThisMonth(state, o)) continue;
     if (p.gold < TASK_COST) continue;
     p.gold -= TASK_COST;
     switch (o.task) {

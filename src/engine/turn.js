@@ -19,8 +19,9 @@ export function startMonth(state) {
   for (const pid of owned) {
     const p = state.provinces[pid];
     const f = state.forces[p.owner];
-    if (!f.human) autoAssignTasks(state, pid, 'balanced');
-    else if (p.delegate) autoAssignTasks(state, pid, p.delegate.directive);
+    // Computer-run provinces give orders first and hand out standing
+    // assignments to whoever is left, so start the month with everyone free.
+    if (!f.human || p.delegate) for (const o of officersIn(state, pid)) o.task = null;
   }
 }
 
@@ -80,6 +81,7 @@ function runComputerTurn(state, pid) {
       log(state, `[${p.name}] Governor ${gov?.name ?? ''} (${DIRECTIVES[directive].label}): ${res.msg}`, 'delegate', [f.id]);
     }
   });
+  if (p.owner === f.id) autoAssignTasks(state, pid, directive);
   return done;
 }
 

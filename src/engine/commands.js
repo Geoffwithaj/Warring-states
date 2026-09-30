@@ -256,6 +256,7 @@ export function executeCommand(state, pid, type, args, opts) {
   if (!cmd) return fail(`Unknown command ${type}`);
   const workers = performersOf(type, args).map((id) => state.officers[id]).filter(Boolean);
   const busy = workers.find((o) => !isIdle(state, o));
+  if (busy?.task) return fail(`${busy.name} is on standing orders (${TASKS[busy.task]}). Clear the assignment to give other orders this month.`);
   if (busy) return fail(`${busy.name} has already been given orders this month.`);
   const res = cmd(state, pid, args, opts);
   if (res.ok) {
