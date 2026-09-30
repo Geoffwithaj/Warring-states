@@ -17,12 +17,14 @@ function mix(hex, amount) {
 }
 
 export function createMapView(container, { onSelect, onHover }) {
-  const svg = s('svg', { viewBox: `0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`, preserveAspectRatio: 'xMidYMid meet' });
+  const svg = s('svg', { class: 'strategic', viewBox: `0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`, preserveAspectRatio: 'xMidYMid meet' });
   const defs = s('defs', {},
     s('pattern', { id: 'waves', width: 24, height: 12, patternUnits: 'userSpaceOnUse' },
-      s('path', { d: 'M0 6 Q6 2 12 6 T24 6', fill: 'none', stroke: '#2b4a70', 'stroke-width': 1 })));
+      s('path', { d: 'M0 6 Q6 2 12 6 T24 6', fill: 'none', stroke: '#2b4a70', 'stroke-width': 1 })),
+    s('marker', { id: 'arrowhead', viewBox: '0 0 10 10', refX: 7, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' },
+      s('path', { d: 'M0,0 L10,5 L0,10 z', fill: '#fff4d0' })));
   svg.append(defs);
-  svg.append(s('rect', { x: 0, y: 0, width: MAP_WIDTH, height: MAP_HEIGHT, fill: 'url(#waves)' }));
+  svg.append(s('rect', { x: -2000, y: -2000, width: MAP_WIDTH + 4000, height: MAP_HEIGHT + 4000, fill: 'url(#waves)' }));
   const land = s('g');
   const overlay = s('g');
   svg.append(land, s('path', { class: 'coast', d: 'M' + OUTLINE.map((p) => p.join(',')).join('L') + 'Z' }));
@@ -30,6 +32,8 @@ export function createMapView(container, { onSelect, onHover }) {
     svg.append(s('polyline', { class: 'river', points: pts.map((p) => p.join(',')).join(' ') }));
   }
   svg.append(overlay);
+  const fx = s('g', { class: 'fx' });
+  svg.append(fx);
 
   const paths = {};
   const labels = {};
@@ -48,6 +52,7 @@ export function createMapView(container, { onSelect, onHover }) {
     labels[p.id] = { seat, star, troops };
   });
   container.append(svg);
+  const view = attachZoom(svg);
 
   function update(state, { selected, awaiting, pickable, humanForce } = {}) {
     const capitals = new Set(Object.values(state.forces).filter((f) => f.alive).map((f) => capitalOf(state, f.id)));
@@ -71,7 +76,142 @@ export function createMapView(container, { onSelect, onHover }) {
     }
   }
 
-  return { update, svg };
+  // Playback effects: an arrow from one province to another, a pulse on one.
+  function showArrow(from, to, color = '#fff4d0') {
+    clearFx();
+    const a = PROVINCES.find((p) => p.id === from);
+    const b = PROVINCES.find((p) => p.id === to);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const trim = 12;
+    fx.append(
+      s('circle', { class: 'fx-pulse', cx: b.x, cy: b.y, r: 22, stroke: color }),
+      s('line', {
+        class: 'fx-arrow', x1: a.x + (dx / len) * trim, y1: a.y + (dy / len) * trim,
+        x2: b.x - (dx / len) * trim, y2: b.y - (dy / len) * trim, 'marker-end': 'url(#arrowhead)',
+      }));
+  }
+  function pulse(pid, color = '#fff4d0') {
+    clearFx();
+    const p = PROVINCES.find((q) => q.id === pid);
+    fx.append(s('circle', { class: 'fx-pulse', cx: p.x, cy: p.y, r: 22, stroke: color }));
+  }
+  function clearFx() {
+    fx.replaceChildren();
+  }
+
+  return { update, svg, showArrow, pulse, clearFx, ...view };
+}
+
+// Pinch/drag/wheel zoom by rewriting the viewBox. A drag never counts as a tap.
+function attachZoom(svg) {
+  const full = { x: 0, y: 0, w: MAP_WIDTH, h: MAP_HEIGHT };
+  let vb = { ...full };
+  const apply = () => svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  const clampVb = () => {
+    vb.w = Math.min(full.w, Math.max(full.w / 6, vb.w));
+    vb.h = vb.w * (full.h / full.w);
+    vb.x = Math.min(full.w - vb.w * 0.3, Math.max(-vb.w * 0.7, vb.x));
+    vb.y = Math.min(full.h - vb.h * 0.3, Math.max(-vb.h * 0.7, vb.y));
+    if (vb.w >= full.w) vb = { ...full };
+  };
+  const unitsPerPx = () => {
+    const r = svg.getBoundingClientRect();
+    return Math.max(vb.w / r.width, vb.h / r.height);
+  };
+  const toSvg = (cx, cy) => {
+    const r = svg.getBoundingClientRect();
+    const k = unitsPerPx();
+    const offX = (r.width * k - vb.w) / 2;
+    const offY = (r.height * k - vb.h) / 2;
+    return [vb.x - offX + (cx - r.left) * k, vb.y - offY + (cy - r.top) * k];
+  };
+  const zoomAt = (factor, cx, cy) => {
+    const [px, py] = toSvg(cx, cy);
+    const w = vb.w / factor;
+    const nw = Math.min(full.w, Math.max(full.w / 6, w));
+    const f = vb.w / nw;
+    vb.x = px - (px - vb.x) / f;
+    vb.y = py - (py - vb.y) / f;
+    vb.w = nw;
+    clampVb();
+    apply();
+  };
+
+  const pts = new Map();
+  let dragged = false;
+  let pinchDist = 0;
+  svg.addEventListener('pointerdown', (e) => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
+    if (pts.size === 1) dragged = false;
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+  });
+  svg.addEventListener('pointermove', (e) => {
+    const p = pts.get(e.pointerId);
+    if (!p) return;
+    if (pts.size === 1) {
+      if (!dragged && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) < 8) return;
+      if (!dragged) svg.setPointerCapture?.(e.pointerId);
+      dragged = true;
+      const k = unitsPerPx();
+      vb.x -= (e.clientX - p.x) * k;
+      vb.y -= (e.clientY - p.y) * k;
+      clampVb();
+      apply();
+    } else if (pts.size === 2) {
+      dragged = true;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist) zoomAt(d / pinchDist, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      pinchDist = d;
+      return;
+    }
+    p.x = e.clientX;
+    p.y = e.clientY;
+  });
+  const up = (e) => {
+    pts.delete(e.pointerId);
+    pinchDist = 0;
+  };
+  svg.addEventListener('pointerup', up);
+  svg.addEventListener('pointercancel', up);
+  svg.addEventListener('click', (e) => {
+    if (dragged) {
+      e.stopPropagation();
+      e.preventDefault();
+      dragged = false;
+    }
+  }, true);
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX, e.clientY);
+  }, { passive: false });
+
+  return {
+    zoomIn: () => { const r = svg.getBoundingClientRect(); zoomAt(1.4, r.left + r.width / 2, r.top + r.height / 2); },
+    zoomOut: () => { const r = svg.getBoundingClientRect(); zoomAt(1 / 1.4, r.left + r.width / 2, r.top + r.height / 2); },
+    resetZoom: () => { vb = { ...full }; apply(); },
+    isZoomed: () => vb.w < full.w,
+    // Centre on a province, zooming in to at least `zoom` (1 = whole map).
+    focus: (pid, zoom = 1) => {
+      const p = PROVINCES.find((q) => q.id === pid);
+      if (!p) return;
+      const w = Math.min(vb.w, full.w / zoom);
+      if (w >= full.w && vb.w >= full.w) return;
+      vb.w = w;
+      vb.h = w * (full.h / full.w);
+      vb.x = p.x - vb.w / 2;
+      vb.y = p.y - vb.h / 2;
+      clampVb();
+      apply();
+    },
+  };
 }
 
 function starPath(cx, cy, R, r) {

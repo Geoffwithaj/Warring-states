@@ -26,6 +26,12 @@ export function renderProvincePanel(el, ctx) {
   const gov = p.owner ? governorOf(state, pid) : null;
   const ownerColor = p.owner ? state.forces[p.owner].color : '#d9ceaa';
 
+  // Phone navigation between the orders screen and the map.
+  el.append(h('div', { class: 'panel-nav narrow-only' },
+    h('button', { class: 'small', onclick: ctx.showMap }, '🗺 Map'),
+    state.awaiting && state.awaiting !== pid
+      ? h('button', { class: 'small primary', onclick: ctx.backToOrders }, `◀ Orders for ${state.provinces[state.awaiting].name}`) : null));
+
   el.append(h('div', { class: 'panel-head' },
     h('h2', {}, p.name),
     h('span', {}, h('span', { class: 'swatch', style: { background: ownerColor } }), ' ', p.owner ? forceName(state, p.owner) : 'Unclaimed'),

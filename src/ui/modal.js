@@ -4,10 +4,12 @@ const root = () => document.getElementById('modal-root');
 
 // Opens a modal. `actions` are footer buttons; each onClick may return false to
 // keep the modal open. Returns a handle with close() and setActions().
-export function openModal({ title, body, actions = [{ label: 'Close' }], wide = false, dismissable = true }) {
+export function openModal({ title, body, actions = [{ label: 'Close' }], wide = false, dismissable = true, onClose }) {
   const footer = h('footer');
   const close = () => {
+    if (!back.isConnected) return;
     back.remove();
+    onClose?.();
     document.removeEventListener('keydown', onKey);
   };
   const setActions = (list) => {

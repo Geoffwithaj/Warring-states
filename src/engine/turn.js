@@ -52,7 +52,54 @@ function runComputerTurn(state, pid) {
     const gov = governorOf(state, pid);
     log(state, `[${p.name}] Governor ${gov?.name ?? ''} (${DIRECTIVES[directive].label}): ${res.msg}`, 'delegate', [f.id]);
   }
-  return res;
+  return { action, res };
+}
+
+// Advance by one step: a single province's turn, or the end of the month.
+// Returns one of
+//   { type: 'await', pid } | { type: 'battle' } | { type: 'captives' } | { type: 'gameover' }
+//   { type: 'month', idle }            the month rolled over (idle: the player has nothing to order)
+//   { type: 'acted', pid, action, war } a computer-run province took its turn
+//   { type: 'skip' }                   a province with nothing to do was passed over
+export function step(state) {
+  if (state.gameOver) return { type: 'gameover' };
+  if (state.battle) return { type: 'battle' };
+  if (state.pendingCaptives.length) return { type: 'captives' };
+  if (state.awaiting) return { type: 'await', pid: state.awaiting };
+  if (state.queueIndex >= state.queue.length) {
+    endOfMonth(state);
+    checkGameOver(state);
+    startMonth(state);
+    // A player whose every province is delegated still gets to watch each month go by.
+    const idle = humanForces(state).length > 0 && !Object.keys(state.provinces).some((pid) => isHumanControlled(state, pid));
+    return { type: 'month', idle };
+  }
+  const pid = state.queue[state.queueIndex];
+  const p = state.provinces[pid];
+  if (!p.owner || p.actedMonth === monthIndex(state) || !officersIn(state, pid).length) {
+    state.queueIndex++;
+    return { type: 'skip' };
+  }
+  if (isHumanControlled(state, pid)) {
+    state.awaiting = pid;
+    return { type: 'await', pid };
+  }
+  const owner = p.owner;
+  const { action, res } = runComputerTurn(state, pid);
+  state.queueIndex++;
+  let war = null;
+  if (res.ok && action.type === 'war') {
+    const to = action.args.to;
+    war = { from: pid, to, attacker: owner, defender: res.war.kind === 'battle' ? res.war.battle.forces.def : null, winner: 'att' };
+    if (res.war.kind === 'battle') {
+      if (isInteractive(res.war.battle)) {
+        state.battle = res.war.battle;
+        return { type: 'battle' };
+      }
+      war.winner = resolveAuto(state, res.war.battle).winner;
+    }
+  }
+  return { type: 'acted', pid, owner, action, ok: res.ok, msg: res.msg, war };
 }
 
 // Advance until the game needs the player. Returns what it is waiting for:
@@ -60,41 +107,14 @@ function runComputerTurn(state, pid) {
 export function advance(state, { stopAtMonthEnd = false, maxMonths = Infinity } = {}) {
   let months = 0;
   for (;;) {
-    if (state.gameOver) return { type: 'gameover' };
-    if (state.battle) return { type: 'battle' };
-    if (state.pendingCaptives.length) return { type: 'captives' };
-    if (state.awaiting) return { type: 'await', pid: state.awaiting };
-    if (state.queueIndex >= state.queue.length) {
-      endOfMonth(state);
-      checkGameOver(state);
-      startMonth(state);
+    const r = step(state);
+    if (r.type === 'acted' || r.type === 'skip') continue;
+    if (r.type === 'month') {
       months++;
-      if (stopAtMonthEnd || months >= maxMonths) return { type: 'month' };
-      // A player whose every province is delegated still gets to watch each month go by.
-      if (humanForces(state).length && !Object.keys(state.provinces).some((pid) => isHumanControlled(state, pid))) {
-        return { type: 'month' };
-      }
+      if (stopAtMonthEnd || months >= maxMonths || r.idle) return { type: 'month' };
       continue;
     }
-    const pid = state.queue[state.queueIndex];
-    const p = state.provinces[pid];
-    if (!p.owner || p.actedMonth === monthIndex(state) || !officersIn(state, pid).length) {
-      state.queueIndex++;
-      continue;
-    }
-    if (isHumanControlled(state, pid)) {
-      state.awaiting = pid;
-      return { type: 'await', pid };
-    }
-    const res = runComputerTurn(state, pid);
-    state.queueIndex++;
-    if (res.war?.kind === 'battle') {
-      if (isInteractive(res.war.battle)) {
-        state.battle = res.war.battle;
-        return { type: 'battle' };
-      }
-      resolveAuto(state, res.war.battle);
-    }
+    return r;
   }
 }
 

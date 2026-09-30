@@ -12,7 +12,7 @@ import {
   createGame, dateLabel, SEASONS, forceName, provincesOf, officersOf, capitalOf, areAllied, monthIndex,
   officerList,
 } from '../engine/state.js';
-import { newGameStart, advance, playerCommand, governorTakesTurn, concludeBattle } from '../engine/turn.js';
+import { newGameStart, step, playerCommand, governorTakesTurn, concludeBattle } from '../engine/turn.js';
 import { recruitChance, recruitCaptive, releaseCaptive, executeCaptive } from '../engine/war.js';
 import { TASKS } from '../engine/economy.js';
 import { UNIT_TYPES } from '../engine/battle.js';
@@ -103,16 +103,36 @@ function startGame(humanRulers) {
   state = createGame({ humanRulers });
   newGameStart(state);
   buildShell();
-  proceed();
+  run();
 }
 
 function resume(saved) {
   state = saved;
   buildShell();
-  proceed();
+  run();
 }
 
 // ---- Main screen --------------------------------------------------------------
+//
+// As in RTK II, the map fills the screen while the other lords take their
+// turns, and each of your provinces gets a full orders screen when its turn
+// comes. On wide screens both are shown side by side.
+
+const WIDE = window.matchMedia('(min-width: 1100px)');
+const SPEEDS = {
+  normal: { label: 'Normal', war: 1500, gov: 800, month: 900 },
+  fast: { label: 'Fast', war: 600, gov: 300, month: 350 },
+  instant: { label: 'Instant', war: 0, gov: 0, month: 0 },
+};
+
+let view = 'map'; // 'map' | 'orders' (narrow screens only)
+let running = false;
+let skipping = false;
+let pick = null; // { ids, prompt, onPick }
+let card = null; // province shown in the map's info card
+let speed = 'normal';
+try { speed = localStorage.getItem('warring-states-speed') || 'normal'; } catch { /* storage blocked */ }
+if (!SPEEDS[speed]) speed = 'normal';
 
 function buildShell() {
   const app = clear(document.getElementById('app'));
@@ -121,12 +141,64 @@ function buildShell() {
     mapWrap: h('div', { id: 'map-wrap' }),
     side: h('aside', { id: 'side' }),
     log: h('div', { id: 'log' }),
+    banner: h('div', { class: 'map-banner', hidden: true }),
+    ticker: h('div', { class: 'ticker', hidden: true }),
+    card: h('div', { class: 'prov-card', hidden: true }),
+    mapTools: h('div', { class: 'map-tools' }),
   };
   app.append(els.topbar, h('div', { id: 'main' }, els.mapWrap, els.side), els.log);
   map = createMapView(els.mapWrap, {
-    onSelect: (pid) => { selected = pid; render(); },
-    onHover: (pid, e) => showTip(pid ? provinceTooltip(state, pid) : null, e),
+    onSelect: onMapTap,
+    onHover: (pid, e) => (WIDE.matches ? showTip(pid ? provinceTooltip(state, pid) : null, e) : null),
   });
+  els.mapWrap.append(els.banner, els.ticker, els.card, els.mapTools);
+  els.mapWrap.addEventListener('click', (e) => { if (running && e.target.closest('svg.strategic')) skipping = true; }, true);
+  WIDE.onchange = () => render();
+  // Phones start zoomed in on the player's capital so names are legible.
+  const home = viewer || Object.values(state.forces).find((f) => f.human && f.alive)?.id;
+  if (!WIDE.matches && home) setTimeout(() => map.focus(capitalOf(state, home), 2), 0);
+}
+
+function setView(v) {
+  view = v;
+  document.body.dataset.view = v;
+  if (v === 'orders') card = null;
+}
+
+function onMapTap(pid) {
+  if (running) return;
+  if (pick) {
+    if (pick.ids.includes(pid)) {
+      const cb = pick.onPick;
+      endPick();
+      cb(pid);
+    } else {
+      toast(pick.prompt);
+    }
+    return;
+  }
+  if (WIDE.matches) {
+    selected = pid;
+    render();
+    return;
+  }
+  card = card === pid ? null : pid;
+  render();
+}
+
+// Ask the player to tap one of `ids` on the map.
+function pickProvince(ids, prompt, onPick) {
+  pick = { ids, prompt, onPick };
+  card = null;
+  setView('map');
+  if (map.isZoomed() && state.awaiting) map.focus(state.awaiting);
+  render();
+}
+
+function endPick() {
+  pick = null;
+  setView(state?.awaiting ? 'orders' : 'map');
+  render();
 }
 
 function showTip(html, e) {
@@ -142,12 +214,7 @@ function showTip(html, e) {
 }
 
 function toast(msg) {
-  const t = h('div', {
-    style: {
-      position: 'fixed', left: '50%', top: '56px', transform: 'translateX(-50%)', background: '#0d1122f0',
-      border: '1px solid var(--gold)', borderRadius: '8px', padding: '8px 16px', zIndex: 60, maxWidth: '80vw',
-    },
-  }, msg);
+  const t = h('div', { class: 'toast' }, msg);
   document.body.append(t);
   setTimeout(() => t.remove(), 3200);
 }
@@ -160,6 +227,7 @@ function ctxFor(pid) {
     refresh: render,
     toast,
     highlight: (ids) => { highlight = ids; render(); },
+    pickProvince,
     issue,
     openCommand: (type) => {
       if (type === 'rest') return issue('rest', {});
@@ -168,8 +236,10 @@ function ctxFor(pid) {
     governorDecides: () => {
       const res = governorTakesTurn(state);
       if (res) toast(res.msg);
-      proceed();
+      run();
     },
+    showMap: () => { setView('map'); render(); },
+    backToOrders: () => { selected = state.awaiting; setView('orders'); render(); },
     showOfficer: (id) => openModal({ title: state.officers[id].name, body: officerDetail(state, id) }),
   };
 }
@@ -180,29 +250,123 @@ function issue(type, args) {
     toast(res.msg);
     return false;
   }
-  if (type === 'war') {
-    if (res.war.kind === 'captured') toast(res.msg);
-  } else {
-    toast(res.msg);
-  }
-  proceed();
+  if (type !== 'war' || res.war.kind === 'captured') toast(res.msg);
+  run();
   return undefined;
 }
 
-function proceed() {
-  const r = advance(state);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+function humanIds() {
+  return new Set(Object.values(state.forces).filter((f) => f.human).map((f) => f.id));
+}
+
+// Shows one computer-run action on the map, if it is worth showing.
+async function playAction(r) {
+  const sp = SPEEDS[skipping ? 'instant' : speed];
+  const humans = humanIds();
+  let ms = 0;
+  let msg = null;
+  if (r.war) {
+    const { from, to, attacker, defender, winner } = r.war;
+    const target = state.provinces[to].name;
+    const who = forceName(state, attacker);
+    if (!defender) msg = `${who} occupies ${target}.`;
+    else msg = winner === 'att'
+      ? `${who} attacks ${target} from ${state.provinces[from].name} — and takes it!`
+      : `${who} attacks ${target} from ${state.provinces[from].name} — ${forceName(state, defender)} holds.`;
+    ms = defender ? sp.war : sp.gov;
+    if (ms) map.showArrow(from, to, winner === 'att' ? '#ffe08a' : '#ff8a7a');
+  } else if (humans.has(r.owner) && r.action.type !== 'rest') {
+    msg = `${state.provinces[r.pid].name}: ${r.msg}`;
+    ms = sp.gov;
+    if (ms) map.pulse(r.pid);
+  }
+  if (!ms) return;
+  setView('map');
+  card = null;
+  showTicker(msg);
+  render();
+  if (map.isZoomed()) map.focus(r.war ? r.war.to : r.pid);
+  await sleep(ms);
+  map.clearFx();
+}
+
+async function playMonth() {
+  const sp = SPEEDS[skipping ? 'instant' : speed];
+  if (!sp.month) return;
+  setView('map');
+  els.banner.hidden = false;
+  els.banner.replaceChildren(h('div', { class: 'month-title' }, `${dateLabel(state)}`), h('div', { class: 'muted' }, SEASONS[state.month - 1]));
+  render();
+  await sleep(sp.month);
+  els.banner.hidden = true;
+}
+
+function showTicker(msg) {
+  els.ticker.hidden = !msg;
+  if (msg) els.ticker.textContent = msg;
+}
+
+// The turn loop: step through provinces, showing what happens, until the
+// game needs the player.
+async function run() {
+  if (running) return;
+  running = true;
+  skipping = false;
+  let steps = 0;
+  try {
+    for (;;) {
+      const r = step(state);
+      if (r.type === 'skip') continue;
+      if (r.type === 'acted') {
+        await playAction(r);
+        if (++steps % 25 === 0) await frame();
+        continue;
+      }
+      if (r.type === 'month') {
+        saveTo(AUTOSAVE);
+        await playMonth();
+        if (r.idle) {
+          running = false;
+          stopAt(r);
+          return;
+        }
+        continue;
+      }
+      running = false;
+      stopAt(r);
+      return;
+    }
+  } catch (err) {
+    running = false;
+    console.error(err);
+    toast(`Something went wrong: ${err.message}`);
+  }
+}
+
+function stopAt(r) {
+  skipping = false;
+  showTicker(null);
+  map.clearFx();
   if (r.type !== 'battle') saveTo(AUTOSAVE);
   const awaitingOwner = state.awaiting ? state.provinces[state.awaiting].owner : null;
   if (awaitingOwner) viewer = awaitingOwner;
   else if (!viewer || !state.forces[viewer]?.alive) viewer = Object.values(state.forces).find((f) => f.human && f.alive)?.id ?? null;
   if (r.type === 'await') {
     selected = r.pid;
+    // Playback may have panned elsewhere; bring the camera back home.
+    if (map.isZoomed()) map.focus(r.pid);
+    setView('orders');
     if (lastViewer && lastViewer !== viewer) toast(`${forceName(state, viewer)}'s turn`);
     lastViewer = viewer;
+  } else {
+    setView('map');
   }
   render();
   if (r.type === 'battle') {
-    openBattleView(state, { onFinish: () => { concludeBattle(state); proceed(); } });
+    openBattleView(state, { onFinish: () => { concludeBattle(state); run(); } });
   } else if (r.type === 'captives') {
     openCaptives();
   } else if (r.type === 'gameover') {
@@ -212,10 +376,58 @@ function proceed() {
 
 function render() {
   if (!state) return;
+  document.body.dataset.view = WIDE.matches ? 'split' : view;
   renderTopbar();
-  map.update(state, { selected, awaiting: state.awaiting, pickable: highlight, humanForce: viewer });
+  map.update(state, { selected, awaiting: state.awaiting, pickable: pick?.ids ?? highlight, humanForce: viewer });
   renderProvincePanel(els.side, ctxFor(selected));
+  renderMapOverlays();
   renderLog();
+}
+
+function renderMapOverlays() {
+  // Target picking.
+  if (pick) {
+    els.banner.hidden = false;
+    els.banner.replaceChildren(h('div', {}, pick.prompt), h('button', { class: 'small', onclick: () => endPick() }, 'Cancel'));
+  } else if (!running) {
+    els.banner.hidden = true;
+  }
+  // Province card (phones).
+  if (card && !pick && !running) {
+    const p = state.provinces[card];
+    els.card.hidden = false;
+    els.card.replaceChildren(
+      h('div', { class: 'row' }, h('b', { style: { fontSize: '17px' } }, p.name), h('span', { class: 'spacer' }),
+        h('button', { class: 'small', onclick: () => { card = null; render(); } }, '✕')),
+      h('div', { class: 'card-body' }),
+      h('div', { class: 'row', style: { marginTop: '6px' } },
+        h('button', { class: 'small primary', onclick: () => { selected = card; setView('orders'); render(); } }, 'Details')));
+    els.card.querySelector('.card-body').innerHTML = provinceTooltip(state, card);
+  } else {
+    els.card.hidden = true;
+  }
+  // Floating controls.
+  const tools = [
+    h('button', { class: 'small', onclick: () => map.zoomIn(), title: 'Zoom in' }, '+'),
+    h('button', { class: 'small', onclick: () => map.zoomOut(), title: 'Zoom out' }, '−'),
+    h('button', { class: 'small', onclick: () => map.resetZoom(), title: 'Whole map' }, '⤢'),
+  ];
+  if (running) {
+    tools.push(h('button', { class: 'small', onclick: cycleSpeed, title: 'Playback speed' }, `Speed: ${SPEEDS[speed].label}`));
+    tools.push(h('button', { class: 'small', onclick: () => (skipping = true) }, 'Skip ▶▶'));
+  } else if (state.awaiting && !pick && !WIDE.matches) {
+    tools.push(h('button', { class: 'small primary', onclick: () => { selected = state.awaiting; setView('orders'); render(); } }, `Orders: ${state.provinces[state.awaiting].name} ▶`));
+  } else if (!state.awaiting && !state.battle && !state.gameOver && !pick) {
+    tools.push(h('button', { class: 'small primary', onclick: run }, 'Next month ▶'));
+  }
+  els.mapTools.replaceChildren(...tools);
+}
+
+function cycleSpeed() {
+  const keys = Object.keys(SPEEDS);
+  speed = keys[(keys.indexOf(speed) + 1) % keys.length];
+  try { localStorage.setItem('warring-states-speed', speed); } catch { /* storage blocked */ }
+  renderMapOverlays();
 }
 
 function renderTopbar() {
@@ -228,30 +440,60 @@ function renderTopbar() {
   els.topbar.replaceChildren(...[
     h('span', { class: 'title' }, 'WARRING STATES'),
     h('span', { class: 'date' }, `${dateLabel(state)} · ${SEASONS[state.month - 1]}`),
-    f ? h('span', {}, h('span', { class: 'swatch', style: { background: f.color } }), ` ${forceName(state, viewer)}`) : null,
+    f ? h('span', { class: 'lord' }, h('span', { class: 'swatch', style: { background: f.color } }), ` ${forceName(state, viewer)}`) : null,
+    h('span', { class: 'spacer' }),
+    h('button', { class: 'small menu-btn', onclick: showMenu }, '☰ Menu'),
     h('span', { class: 'res' },
-      h('span', {}, 'Provinces ', h('b', {}, provs.length)),
+      h('span', {}, 'Prov ', h('b', {}, provs.length)),
       h('span', {}, 'Officers ', h('b', {}, officers.length)),
       h('span', {}, 'Troops ', h('b', {}, fmt(troops))),
       h('span', {}, 'Gold ', h('b', {}, fmt(gold))),
       h('span', {}, 'Food ', h('b', {}, fmt(food)))),
-    h('span', { class: 'spacer' }),
-    state.awaiting && selected !== state.awaiting
-      ? h('button', { class: 'small', onclick: () => { selected = state.awaiting; render(); } }, `▶ ${state.provinces[state.awaiting].name}`) : null,
-    !state.awaiting && !state.battle && !state.gameOver
-      ? h('button', { class: 'small primary', onclick: proceed, title: 'All your provinces are delegated' }, 'Next month ▶') : null,
-    h('button', { class: 'small', onclick: showRealm }, 'Realm'),
-    h('button', { class: 'small', onclick: showOfficers }, 'Officers'),
-    h('button', { class: 'small', onclick: showSaveLoad }, 'Save / Load'),
-    h('button', { class: 'small', onclick: () => showHelp() }, 'Help'),
-    h('button', { class: 'small', onclick: () => confirmModal('Quit', 'Return to the title screen? Your progress is autosaved.', () => showTitle(), 'Quit') }, 'Quit'),
+    h('span', { class: 'wide-only row' },
+      h('button', { class: 'small', onclick: showRealm }, 'Realm'),
+      h('button', { class: 'small', onclick: showOfficers }, 'Officers'),
+      h('button', { class: 'small', onclick: showSaveLoad }, 'Save / Load'),
+      h('button', { class: 'small', onclick: () => showHelp() }, 'Help'),
+      h('button', { class: 'small', onclick: quit }, 'Quit')),
   ].filter(Boolean));
 }
 
+function quit() {
+  confirmModal('Quit', 'Return to the title screen? Your progress is autosaved.', () => showTitle(), 'Quit');
+}
+
+function showMenu() {
+  const item = (label, fn) => h('button', { class: 'menu-item', onclick: () => { m.close(); fn(); } }, label);
+  const m = openModal({
+    title: 'Menu',
+    body: h('div', { class: 'menu-list' },
+      item('Realm overview', showRealm),
+      item('Your officers', showOfficers),
+      item('Chronicle (message log)', showChronicle),
+      item(`Playback speed: ${SPEEDS[speed].label}`, () => { cycleSpeed(); showMenu(); }),
+      item('Save / Load', showSaveLoad),
+      item('How to play', () => showHelp()),
+      item('Quit to title', quit)),
+  });
+}
+
+function logEntries() {
+  const humans = humanIds();
+  return state.log.filter((l) => !l.forces || l.kind === 'major' || l.kind === 'war' || l.forces.some((f) => humans.has(f)));
+}
+
+function logRows(entries) {
+  return entries.map((l) => h('div', { class: `entry ${l.kind}` }, h('span', { class: 'date' }, l.date), l.msg));
+}
+
+function showChronicle() {
+  const body = h('div', { class: 'chronicle' }, logRows(logEntries().slice(-200).reverse()));
+  openModal({ title: 'Chronicle', body, wide: true });
+}
+
 function renderLog() {
-  const humans = new Set(Object.values(state.forces).filter((f) => f.human).map((f) => f.id));
-  const entries = state.log.filter((l) => !l.forces || l.kind === 'major' || l.kind === 'war' || l.forces.some((f) => humans.has(f)));
-  els.log.replaceChildren(...entries.slice(-120).map((l) => h('div', { class: `entry ${l.kind}` }, h('span', { class: 'date' }, l.date), l.msg)));
+  if (!WIDE.matches) return;
+  els.log.replaceChildren(...logRows(logEntries().slice(-120)));
   els.log.scrollTop = els.log.scrollHeight;
 }
 
@@ -287,7 +529,7 @@ function openCaptives() {
       onClick: () => {
         for (const id of state.pendingCaptives) delete state.officers[id].triedRecruit;
         state.pendingCaptives = [];
-        proceed();
+        run();
       },
     }],
   });

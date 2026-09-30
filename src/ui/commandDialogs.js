@@ -277,12 +277,17 @@ function officerChecklist(state, officers, chosen, onChange, { max = Infinity } 
   return list;
 }
 
-export function openMove(ctx) {
+export function moveTargets(state, pid) {
+  const p = state.provinces[pid];
+  return ADJACENT[pid].filter((n) => state.provinces[n].owner === p.owner);
+}
+
+export function openMove(ctx, initial) {
   const { state, pid } = ctx;
   const p = state.provinces[pid];
-  const dests = ADJACENT[pid].filter((n) => state.provinces[n].owner === p.owner);
+  const dests = moveTargets(state, pid);
   if (!dests.length) return ctx.toast('No adjacent province of yours to move to. Use War to claim or seize neighbouring land.');
-  const form = { to: dests[0], chosen: new Set(), gold: 0, food: 0 };
+  const form = { to: dests.includes(initial) ? initial : dests[0], chosen: new Set(), gold: 0, food: 0 };
   const summary = h('div', { class: 'preview' });
   const upd = () => {
     const troops = [...form.chosen].reduce((s, id) => s + state.officers[id].troops, 0);
@@ -299,7 +304,7 @@ export function openMove(ctx) {
   upd();
   ctx.highlight([form.to]);
   return openModal({
-    title: `Move from ${p.name}`, body, wide: true,
+    title: `Move from ${p.name}`, body, wide: true, onClose: () => ctx.highlight(null),
     actions: [{ label: 'Cancel', onClick: () => ctx.highlight(null) }, {
       label: 'Move', primary: true,
       onClick: () => { ctx.highlight(null); return ctx.issue('move', { to: form.to, officers: [...form.chosen], gold: form.gold, food: form.food }); },
@@ -309,13 +314,18 @@ export function openMove(ctx) {
 
 // ---- War --------------------------------------------------------------------
 
-export function openWar(ctx) {
+export function warTargets(state, pid) {
+  const p = state.provinces[pid];
+  return ADJACENT[pid].filter((n) => state.provinces[n].owner !== p.owner && !areAllied(state, p.owner, state.provinces[n].owner));
+}
+
+export function openWar(ctx, initial) {
   const { state, pid } = ctx;
   const p = state.provinces[pid];
-  const targets = ADJACENT[pid].filter((n) => state.provinces[n].owner !== p.owner && !areAllied(state, p.owner, state.provinces[n].owner));
+  const targets = warTargets(state, pid);
   if (!targets.length) return ctx.toast('There is no one to attack from here.');
   const officers = officersIn(state, pid).sort((a, b) => strengthOf(b) - strengthOf(a));
-  const form = { to: targets[0], chosen: new Set(officers.filter((o) => o.troops > 0).slice(0, 3).map((o) => o.id)), commander: null, food: 0 };
+  const form = { to: targets.includes(initial) ? initial : targets[0], chosen: new Set(officers.filter((o) => o.troops > 0).slice(0, 3).map((o) => o.id)), commander: null, food: 0 };
   const intel = h('div', { class: 'preview' });
   const cmdHolder = h('div');
   let foodSlider;
@@ -354,7 +364,7 @@ export function openWar(ctx) {
   upd();
   ctx.highlight([form.to]);
   return openModal({
-    title: `War — march from ${p.name}`, body, wide: true,
+    title: `War — march from ${p.name}`, body, wide: true, onClose: () => ctx.highlight(null),
     actions: [{ label: 'Cancel', onClick: () => ctx.highlight(null) }, {
       label: 'March!', primary: true,
       onClick: () => {
@@ -444,6 +454,16 @@ export function openDiplomacy(ctx) {
 }
 
 export function openCommandDialog(ctx, type) {
+  // Like RTK II, choosing where to march or attack happens on the map.
+  if (type === 'war' || type === 'move') {
+    const ids = type === 'war' ? warTargets(ctx.state, ctx.pid) : moveTargets(ctx.state, ctx.pid);
+    if (!ids.length) {
+      return ctx.toast(type === 'war' ? 'There is no one to attack from here.' : 'No adjacent province of yours to move to. Use War to claim or seize neighbouring land.');
+    }
+    const from = ctx.state.provinces[ctx.pid].name;
+    const prompt = type === 'war' ? `Tap a province to attack from ${from}` : `Tap a province to move to from ${from}`;
+    return ctx.pickProvince(ids, prompt, (to) => (type === 'war' ? openWar(ctx, to) : openMove(ctx, to)));
+  }
   const map = {
     develop: openDevelop, military: openMilitary, personnel: openPersonnel, move: openMove,
     war: openWar, trade: openTrade, diplomacy: openDiplomacy,

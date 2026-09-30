@@ -42,6 +42,15 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   and deserting officers wander between provinces; officers who debut naturally stay put until found.
 - Hot-seat multiplayer: pick several lords on the title screen.
 
+**Screens (as in RTK II)**
+- Between your turns the map fills the screen and other lords' actions play out on it: attacks are
+  drawn as arrows and the result shown in a ticker. There's a speed setting (Normal, Fast, Instant),
+  and tapping the map skips ahead.
+- When one of your provinces comes up, a full orders screen appears; the Map button shows the map.
+  War and Move switch to the map so you tap the target province.
+- On phones the map supports pinch-zoom and drag and starts zoomed on your capital, and dialogs are
+  full-screen. On wide screens the map and orders are shown side by side.
+
 **Turn structure (as in RTK II)**
 - Each month every province of every lord takes one turn, in a random order. When one of yours comes up
   it pulses on the map. Commands: Develop, Military, Personnel, Move, War, Trade, Diplomacy, Rest — or
