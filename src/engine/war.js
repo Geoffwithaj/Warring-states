@@ -206,6 +206,7 @@ export function finishBattle(state, b) {
     log(state, `${forceName(state, fa)}'s troops carry ${loot} gold of plunder home from ${dst.name}.`, 'war', [fa, fd]);
   }
   if (b.recovered) dst.gold += b.recovered;
+  for (const msg of b.chronicle || []) log(state, msg, 'war', [fa, fd].filter(Boolean));
   if (b.intent !== 'raid') onGoalBattle(state, fa, b.pid, winner === 'att');
   const survivors = (side) => b.units.filter((u) => u.side === side && !u.slain && !u.captured).map((u) => state.officers[u.officer]);
   const summary = `${forceName(state, winner === 'att' ? fa : fd)} is victorious at ${dst.name}. ${reason}`;
@@ -269,7 +270,10 @@ export function releaseCaptive(state, id) {
     enlist(state, o, prev.id, capitalOf(state, prev.id));
     o.troops = 0;
     remember(state, prev.id, captor, 'released');
-    log(state, `${forceName(state, captor)} releases ${o.name}, who returns to ${forceName(state, prev.id)}.`, 'info', [captor, prev.id]);
+    const home = state.provinces[capitalOf(state, prev.id)].name;
+    log(state, prev.ruler === o.id
+      ? `${forceName(state, captor)} releases ${o.name}, who returns to ${home}.`
+      : `${forceName(state, captor)} releases ${o.name}, who returns to ${forceName(state, prev.id)} at ${home}.`, 'info', [captor, prev.id]);
   } else {
     o.status = 'free';
     o.force = null;

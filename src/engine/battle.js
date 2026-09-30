@@ -898,6 +898,8 @@ function answerDuel(state, b, u, t, accepted) {
   }
   const [winner, loser, wu, lu] = res > 0 ? [a, d, u, t] : [d, a, t, u];
   addLog(b, `${winner.name} defeats ${loser.name} in single combat!`);
+  // Duels are remembered after the battle, in the chronicle.
+  (b.chronicle ||= []).push(`${a.name} (WAR ${a.war}) challenged ${d.name} (WAR ${d.war}) at ${PROVINCE_BY_ID[b.pid]?.name ?? b.pid}; ${winner.name} won the duel.`);
   wu.morale = clamp(wu.morale + 20, 0, 100);
   lu.status = 'defeated';
   lu.done = true;
