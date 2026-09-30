@@ -160,3 +160,21 @@ test('captives eventually escape back to their lord', async () => {
   assert.equal(o.status, 'serving');
   assert.equal(o.force, 'liu-bei');
 });
+
+test('a drill master trains the whole garrison, less effectively when it is large', async () => {
+  const { trainGain, drillEffect } = await import('../src/engine/economy.js');
+  const master = { war: 90 };
+  const unit = { training: 40, troops: 5000 };
+  assert.equal(drillEffect(master, 10000), 1);
+  assert.ok(drillEffect(master, 60000) < 0.6);
+  assert.ok(trainGain(unit, master, 10000) > trainGain(unit, master, 60000));
+  assert.ok(trainGain(unit, master, 1e9) > 0, 'even a huge garrison improves a little');
+
+  const state = createGame({ humanRulers: ['cao-cao'], seed: 4 });
+  newGameStart(state);
+  advance(state);
+  const before = officersIn(state, 'chenliu').map((o) => o.training);
+  assert.ok(playerCommand(state, 'train', { officer: 'xiahou-dun' }).ok);
+  const after = officersIn(state, 'chenliu').map((o) => o.training);
+  assert.ok(after.every((t, i) => t >= before[i]) && after.some((t, i) => t > before[i]), 'every unit is drilled');
+});

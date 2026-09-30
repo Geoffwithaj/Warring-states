@@ -81,7 +81,8 @@ export const COMMANDS = {
     if (!master) return fail('Invalid officer.');
     const units = officersIn(state, pid).filter((o) => o.troops > 0);
     if (!units.length) return fail('There are no troops to train.');
-    for (const o of units) o.training = clamp(o.training + trainGain(o, master), 0, 100);
+    const total = units.reduce((sum, o) => sum + o.troops, 0);
+    for (const o of units) o.training = clamp(o.training + trainGain(o, master, total), 0, 100);
     return ok(`${master.name} drills the garrison of ${state.provinces[pid].name}.`);
   },
 

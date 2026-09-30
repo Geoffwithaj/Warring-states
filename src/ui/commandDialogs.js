@@ -7,7 +7,7 @@ import {
   troopCap,
 } from '../engine/state.js';
 import { ADJACENT } from '../engine/map.js';
-import { DEV_FIELDS, devGain, reliefGain, trainGain, maxDraft, draftCost } from '../engine/economy.js';
+import { DEV_FIELDS, devGain, reliefGain, trainGain, maxDraft, draftCost, drillCapacity, drillEffect } from '../engine/economy.js';
 import { UNIT_TYPES } from '../engine/battle.js';
 import {
   searchChance, freeRecruitChance, captiveRecruitChance, allianceChance, transferTroops,
@@ -125,12 +125,17 @@ export function openMilitary(ctx, initial) {
       render: () => {
         if (!officers().length) return none();
         const master = state.officers[train.officer];
-        const units = officers().filter((o) => o.troops > 0);
+        const units = officersIn(state, pid).filter((o) => o.troops > 0);
+        const total = units.reduce((sum, o) => sum + o.troops, 0);
+        const effect = drillEffect(master, total);
         return h('div', {},
           h('div', { class: 'form' }, h('span', {}, 'Drill master'),
             select(officerOpts([...officers()].sort((a, b) => b.war - a.war), 'war'), train.officer, (v) => { train.officer = v; tabs.show(); })),
+          units.length ? h('p', { class: 'hint' },
+            `${master.name} drills the whole garrison of ${fmt(total)} men and can give full attention to about ${fmt(drillCapacity(master))}. `,
+            h('span', { class: effect < 1 ? 'warn' : 'good' }, `Effectiveness ${Math.round(effect * 100)}%.`)) : null,
           h('div', { class: 'preview', style: { marginTop: '8px' } },
-            units.length ? units.map((o) => h('div', {}, `${o.name}: training ${o.training} → ${Math.min(100, o.training + trainGain(o, master))}`))
+            units.length ? units.map((o) => h('div', {}, `${o.name}: training ${o.training} → ${Math.min(100, o.training + trainGain(o, master, total))}`))
               : 'No troops to train.'));
       },
       onShow: () => modal?.setActions([{ label: 'Cancel' }, { label: 'Train', primary: true, disabled: !officers().length, onClick: () => ctx.issue('train', { officer: train.officer }) }]),

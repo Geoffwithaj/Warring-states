@@ -60,8 +60,17 @@ export function reliefGain(p, o, food) {
   return Math.max(0, Math.round((food / 60) * skill(o, 'cha') * (1 - p.order / 110)));
 }
 
-export function trainGain(o, master) {
-  return Math.max(0, Math.round((4 + master.war / 8) * (1 - o.training / 105)));
+// A drill master trains every unit in the province, but can only give full
+// attention to so many men; beyond that the drilling thins out.
+export const drillCapacity = (master) => 8000 + master.war * 120;
+
+export function drillEffect(master, totalTroops) {
+  if (totalTroops <= 0) return 1;
+  return clamp(Math.sqrt(drillCapacity(master) / totalTroops), 0.3, 1);
+}
+
+export function trainGain(o, master, totalTroops = o.troops) {
+  return Math.max(0, Math.round((4 + master.war / 8) * (1 - o.training / 105) * drillEffect(master, totalTroops)));
 }
 
 export const draftCost = (troops) => Math.ceil(troops / 10);
@@ -94,9 +103,13 @@ function applyTasks(state, p) {
       case 'order':
         p.order = clamp(p.order + Math.round(2 * skill(o, 'cha')), 0, 100);
         break;
-      case 'train':
-        if (o.troops > 0) o.training = clamp(o.training + Math.round(trainGain(o, o) / 2), 0, 100);
+      case 'train': {
+        // Drilling duty covers the whole garrison, at half the rate of a full Train order.
+        const units = officersIn(state, p.id).filter((u) => u.troops > 0);
+        const total = units.reduce((sum, u) => sum + u.troops, 0);
+        for (const u of units) u.training = clamp(u.training + Math.round(trainGain(u, o, total) / 2), 0, 100);
         break;
+      }
     }
   }
 }
