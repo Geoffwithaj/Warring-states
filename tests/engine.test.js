@@ -219,3 +219,28 @@ test('standing assignments are the officer\'s job for the month and can be clear
   assert.equal(state.provinces.chenliu.walls, walls);
   assert.ok(state.provinces.chenliu.gold >= gold, 'no stipend was paid');
 });
+
+test('building assignments share the assignment budget; drilling is free', async () => {
+  const { setTask, setTaskBudget } = await import('../src/engine/commands.js');
+  const { endOfMonth, monthlyGold } = await import('../src/engine/economy.js');
+  const run = (budget) => {
+    const state = createGame({ humanRulers: ['cao-cao'], seed: 12 });
+    newGameStart(state);
+    for (const o of officersIn(state, 'chenliu')) o.task = null;
+    setTask(state, 'cao-cao', 'farm');
+    setTask(state, 'chen-gong', 'farm');
+    setTask(state, 'xiahou-dun', 'train');
+    setTaskBudget(state, 'chenliu', budget);
+    const p = state.provinces.chenliu;
+    const income = monthlyGold(p);
+    const [farm, gold] = [p.farm, p.gold];
+    endOfMonth(state);
+    return { gained: p.farm - farm, spent: gold + income - p.gold, income };
+  };
+  const none = run(0);
+  const full = run(1);
+  assert.ok(none.gained >= 2, 'officers still add a little labour with no budget');
+  assert.equal(none.spent, 0, 'labour-only work costs nothing');
+  assert.ok(full.gained > none.gained, 'funding speeds up building work');
+  assert.ok(full.spent <= full.income, 'the budget never exceeds the month’s income');
+});

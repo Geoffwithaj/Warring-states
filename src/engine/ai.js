@@ -7,7 +7,7 @@ import {
   capitalOf, rulerOf, troopCap,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
-import { DEV_FIELDS, foodUpkeep, harvestFood, maxDraft, monthlyGold, TASKS, TASK_COST } from './economy.js';
+import { DEV_FIELDS, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
 import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
 
@@ -245,19 +245,14 @@ export function planProvinceTurn(state, pid, directive, { isAI, skip = new Set()
 
 // Standing assignments for officers of a computer-run province.
 // Officers left without orders after the province's turn get standing
-// assignments, within a budget of about half the monthly income.
+// assignments; the directive decides how much income funds them.
 export function autoAssignTasks(state, pid, directive) {
   const p = state.provinces[pid];
   for (const o of officersIn(state, pid)) if (usedThisMonth(state, o)) o.task = null;
   const here = officersIn(state, pid).filter((o) => !usedThisMonth(state, o));
-  const budget = Math.max(0, Math.floor(monthlyGold(p) / (TASK_COST * 2)));
-  let n = 0;
+  p.taskBudget = { develop: 1, balanced: 0.5 }[directive] ?? 0.25;
   const sorted = [...here].sort((a, b) => b.int + b.cha - (a.int + a.cha));
   for (const o of sorted) {
-    if (n >= budget) {
-      o.task = null;
-      continue;
-    }
     let task;
     if (o.troops > 0 && o.training < 80 && o.war >= o.int) task = 'train';
     else if (p.order < 55 && o.cha >= 65) task = 'order';
@@ -265,6 +260,5 @@ export function autoAssignTasks(state, pid, directive) {
     else if (isRiver(pid) && p.flood < 70 && o.int >= 60) task = 'flood';
     else task = p.farm <= p.commerce ? 'farm' : 'commerce';
     o.task = TASKS[task] ? task : null;
-    n++;
   }
 }

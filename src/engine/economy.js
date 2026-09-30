@@ -30,7 +30,17 @@ export const TASKS = {
   order: 'Patrol & keep order',
   train: 'Drill troops',
 };
-export const TASK_COST = 8; // gold per officer per month
+// Building assignments draw on the province's assignment budget: a share of
+// the month's gold income, split evenly among the officers doing them.
+export const FUNDED_TASKS = new Set(['farm', 'commerce', 'flood', 'walls']);
+export const BUDGET_LEVELS = [0, 0.25, 0.5, 0.75, 1];
+export const DEFAULT_BUDGET = 0.5;
+export const taskBudgetShare = (p) => p.taskBudget ?? DEFAULT_BUDGET;
+
+// Gold that this month's assignment budget will provide, given the income.
+export function assignmentBudget(p, income) {
+  return Math.max(0, Math.min(p.gold, Math.floor(income * taskBudgetShare(p))));
+}
 
 const orderMult = (p) => 0.5 + p.order / 200;
 
@@ -83,22 +93,28 @@ export function maxDraft(state, pid, o) {
   return Math.max(0, Math.floor(Math.min(byCap, byGold, byPop) / 100) * 100);
 }
 
-// Standing assignments: officers work on a province every month for a small
-// stipend, independent of the orders given in the province's turn.
-function applyTasks(state, p) {
-  for (const o of officersIn(state, p.id)) {
-    // An officer who was given orders this month has no time for their assignment.
-    if (!o.task || usedThisMonth(state, o)) continue;
-    if (p.gold < TASK_COST) continue;
-    p.gold -= TASK_COST;
+// Standing assignments run at the end of each month. Labour-only jobs (drill,
+// patrol) cost nothing; building jobs share the assignment budget and turn gold
+// into development at the same rate as the Develop order, plus a little from
+// the officer's own labour.
+function applyTasks(state, p, income) {
+  // An officer who was given orders this month has no time for their assignment.
+  const workers = officersIn(state, p.id).filter((o) => o.task && !usedThisMonth(state, o));
+  const funded = workers.filter((o) => FUNDED_TASKS.has(o.task));
+  const budget = assignmentBudget(p, income);
+  const share = funded.length ? Math.floor(budget / funded.length) : 0;
+  for (const o of workers) {
     switch (o.task) {
       case 'farm':
       case 'commerce':
       case 'flood':
       case 'walls': {
         const f = DEV_FIELDS[o.task];
-        const g = (o.task === 'farm' || o.task === 'commerce' ? 5 : 1.2) * skill(o, f.stat) * (1 - p[o.task] / (f.max * 1.1));
-        p[o.task] = clamp(p[o.task] + Math.max(1, Math.round(g)), 0, f.max);
+        const spend = Math.min(share, p.gold);
+        p.gold -= spend;
+        const labour = Math.max(1, Math.round(skill(o, f.stat) * (f.max > 100 ? 1.5 : 0.6)));
+        const gain = devGain(p, o.task, o, spend) + (p[o.task] < f.max ? labour : 0);
+        p[o.task] = clamp(p[o.task] + gain, 0, f.max);
         break;
       }
       case 'order':
@@ -237,15 +253,17 @@ export function endOfMonth(state) {
     }
     // Remit a share of income to the capital.
     const cap = capitalOf(state, p.owner);
+    let kept = gold;
     if (p.remit && cap && cap !== p.id) {
       const g = Math.floor(gold * p.remit);
+      kept -= g;
       const f = Math.floor(food * p.remit);
       p.gold -= g;
       p.food -= f;
       state.provinces[cap].gold += g;
       state.provinces[cap].food += f;
     }
-    applyTasks(state, p);
+    applyTasks(state, p, kept);
     const upkeep = foodUpkeep(state, p.id);
     p.food -= upkeep;
     if (p.food < 0) {

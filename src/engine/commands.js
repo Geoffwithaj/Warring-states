@@ -277,6 +277,10 @@ export function setRemit(state, pid, remit) {
   state.provinces[pid].remit = clamp(remit, 0, 0.75);
 }
 
+export function setTaskBudget(state, pid, share) {
+  state.provinces[pid].taskBudget = clamp(Number(share) || 0, 0, 1);
+}
+
 export function setTask(state, oid, task) {
   const o = state.officers[oid];
   if (task === null || TASKS[task]) o.task = task;

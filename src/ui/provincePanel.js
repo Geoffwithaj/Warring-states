@@ -4,10 +4,10 @@ import { h, fmt, bar, select } from './dom.js';
 import {
   officersIn, idleOfficersIn, usedThisMonth, captivesIn, freeOfficersIn, forceName, governorOf, troopsIn, capitalOf, age, areAllied,
 } from '../engine/state.js';
-import { TAX, TASKS, TASK_COST, monthlyGold, harvestFood, foodUpkeep, HARVEST_MONTH, popCap } from '../engine/economy.js';
+import { TAX, TASKS, FUNDED_TASKS, BUDGET_LEVELS, taskBudgetShare, monthlyGold, harvestFood, foodUpkeep, HARVEST_MONTH, popCap } from '../engine/economy.js';
 import { DIRECTIVES } from '../engine/ai.js';
 import { UNIT_TYPES } from '../engine/battle.js';
-import { setTax, setRemit, setTask, setDelegate, setGovernor } from '../engine/commands.js';
+import { setTax, setRemit, setTask, setDelegate, setGovernor, setTaskBudget } from '../engine/commands.js';
 import { PROVINCE_BY_ID } from '../engine/map.js';
 
 const stat = (label, value, extra) => h('div', { class: 'stat' }, h('span', {}, label), h('span', {}, value, extra || ''));
@@ -115,6 +115,8 @@ function managementSection(ctx, p) {
   const isCapital = capitalOf(state, p.owner) === pid;
   const refresh = (fn) => (v) => { fn(v); ctx.refresh(); };
   const directiveOpts = [['', 'Rule directly'], ...Object.entries(DIRECTIVES).map(([k, d]) => [k, `Delegate: ${d.label}`])];
+  const income = Math.floor(monthlyGold(p) * (1 - (isCapital ? 0 : p.remit)));
+  const funded = officers.filter((o) => FUNDED_TASKS.has(o.task)).length;
   return h('div', { class: 'section' }, h('h3', {}, 'Management'),
     h('div', { class: 'mgmt' },
       h('span', {}, 'Tax rate'),
@@ -128,11 +130,17 @@ function managementSection(ctx, p) {
       isCapital ? h('span', { class: 'muted' }, 'This is the capital')
         : select([[0, 'None'], [0.25, '25% of income'], [0.5, '50% of income'], [0.75, '75% of income']], p.remit,
           refresh((v) => setRemit(state, pid, Number(v)))),
+      h('span', {}, 'Assignment budget'),
+      p.delegate ? h('span', { class: 'muted' }, `${Math.round(taskBudgetShare(p) * 100)}% of income (set by the governor)`)
+        : select(BUDGET_LEVELS.map((b) => [b, b ? `${b * 100}% of income (~${Math.floor(income * b)} gold/mo)` : 'None — labour only']), taskBudgetShare(p),
+          refresh((v) => setTaskBudget(state, pid, v))),
       h('span', {}, 'Control'),
       select(directiveOpts, p.delegate?.directive || '', refresh((v) => setDelegate(state, pid, v || null))),
     ),
-    p.delegate ? h('p', { class: 'hint' }, `${DIRECTIVES[p.delegate.directive].desc} The governor also sets officer assignments each month.`) : null,
-    h('p', { class: 'hint' }, `A standing assignment is that officer\u2019s job every month (${TASK_COST} gold each, paid at month end). It is skipped in any month the officer is given other orders.`),
+    p.delegate ? h('p', { class: 'hint' }, `${DIRECTIVES[p.delegate.directive].desc} The governor also sets officer assignments and their budget each month.`) : null,
+    h('p', { class: 'hint' },
+      `A standing assignment is that officer\u2019s job every month, done at month end and skipped in any month they are given other orders. `,
+      `Drilling and patrols cost nothing. Building work ($) shares the assignment budget${funded ? ` — ${funded} officer${funded > 1 ? 's' : ''} now, ~${Math.floor(income * taskBudgetShare(p) / funded)} gold each` : ''} and turns gold into progress as efficiently as Develop.`),
   );
 }
 
@@ -143,7 +151,7 @@ function officerTable(ctx, officers, mine) {
     .sort((a, b) => (b.id === f?.ruler) - (a.id === f?.ruler) || b.troops - a.troops)
     .map((o) => {
       const taskCell = mine && !state.provinces[ctx.pid].delegate
-        ? select([['', '—'], ...Object.entries(TASKS)], o.task || '', (v) => { setTask(state, o.id, v || null); ctx.refresh(); })
+        ? select([['', '—'], ...Object.entries(TASKS).map(([k, label]) => [k, FUNDED_TASKS.has(k) ? `${label} ($)` : label])], o.task || '', (v) => { setTask(state, o.id, v || null); ctx.refresh(); })
         : h('span', { class: 'muted' }, o.task ? TASKS[o.task] : '—');
       return h('tr', { class: 'clickable', onclick: (e) => { if (e.target.tagName !== 'SELECT') ctx.showOfficer(o.id); } },
         h('td', {}, o.name, o.id === f?.ruler ? h('span', { class: 'tag gold' }, 'Lord') : null,

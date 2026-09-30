@@ -79,6 +79,7 @@ export function createGame({ scenarioId = SCENARIOS[0].id, humanRulers = [], see
       order: randInt(state, 45, 65),
       tax: 'normal',
       remit: 0,
+      taskBudget: 0.5,
       delegate: null,
     };
   }

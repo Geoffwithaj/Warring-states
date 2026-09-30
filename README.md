@@ -74,9 +74,12 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   Build military, Hold the line, or Expand. Governors act on their own and report what they did in the
   log. They also set their officers' assignments.
 - **Standing assignments**: each officer can be given an ongoing job (tend farmland, oversee markets,
-  maintain dikes, repair walls, keep order, drill troops) that runs at the end of every month for a
-  small stipend. It counts as that officer's job for the month: officers on assignment are busy, and
-  clearing the assignment frees them for orders the same turn (that month's work is then skipped).
+  maintain dikes, repair walls, keep order, drill troops) that runs at the end of every month. It
+  counts as that officer's job for the month: officers on assignment are busy, and clearing the
+  assignment frees them for orders the same turn (that month's work is then skipped).
+- **Assignment budget**: drilling and patrols are free; building work (farmland, markets, dikes,
+  walls) shares a per-province budget of 0–100% of monthly income, spent as efficiently as Develop,
+  plus a little from the officers' own labour. Governors set the budget from their directive.
 - **Remit to capital**: an outlying province can send 25–75% of its income to the capital.
 - Choose the governor, and see an income, harvest and upkeep forecast for each province.
 
