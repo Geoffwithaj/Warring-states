@@ -180,6 +180,9 @@ table.officers select { font-size: 12px; padding: 1px 2px; max-width: 120px; }
 .battle-side .blog div { padding: 1px 0; border-bottom: 1px solid #ffffff08; }
 .battle-info { padding: 8px 12px; min-height: 86px; background: var(--panel-2); border-bottom: 1px solid var(--line); font-size: 13.5px; }
 .battle-info .preview-line { color: #ffb080; margin-top: 2px; }
+.battle-info .factors { display: flex; flex-wrap: wrap; gap: 3px 8px; margin-top: 3px; font-size: 12px; }
+.battle-info .factors .up { color: var(--good); }
+.battle-info .factors .down { color: var(--bad); }
 .hex { stroke: #00000055; stroke-width: 1; }
 .hex.reach { stroke: #9fd0ff; stroke-width: 2; }
 .hex.reach-fill { fill: #9fd0ff33; pointer-events: none; }

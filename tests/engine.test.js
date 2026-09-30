@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { createGame, officersIn, provincesOf } from '../src/engine/state.js';
 import { newGameStart, advance, playerCommand, concludeBattle } from '../src/engine/turn.js';
 import { ADJACENT } from '../src/engine/map.js';
-import { createBattle, doMove, reachable, autoResolve, idx, hexDist } from '../src/engine/battle.js';
+import {
+  createBattle, doMove, reachable, autoResolve, idx, hexDist, neighbors, isBreached, canAssault, doAssault,
+  provinceField, approachEdge,
+} from '../src/engine/battle.js';
 import { devGain } from '../src/engine/economy.js';
 
 test('every province has at least one neighbour and adjacency is symmetric', () => {
@@ -78,23 +81,64 @@ test('a player attack produces an interactive battle that can be concluded', () 
   assert.deepEqual(copy.provinces, state.provinces);
 });
 
-test('taking the castle wins the battle for the attacker', () => {
-  const state = createGame({ seed: 3 });
-  const b = createBattle(state, {
-    pid: 'xuchang', from: 'chenliu', provTerrain: 'plains', river: false, walls: 50,
-    att: { force: 'cao-cao', officers: [{ officer: 'xiahou-yuan', troops: 5000, training: 80, unit: 'cav' }], commander: 'xiahou-yuan', food: 500 },
-    def: { force: 'yuan-shu', officers: [{ officer: 'ji-ling', troops: 3000, training: 50, unit: 'inf' }], commander: 'ji-ling', food: 500 },
+function siege(state, { walls = 60, attUnit = 'inf', defUnit = 'inf', attTroops = 5000, defTroops = 3000 } = {}) {
+  return createBattle(state, {
+    pid: 'xuchang', from: 'chenliu', walls,
+    att: { force: 'cao-cao', officers: [{ officer: 'xiahou-yuan', troops: attTroops, training: 80, unit: attUnit }], commander: 'xiahou-yuan', food: 500 },
+    def: { force: 'yuan-shu', officers: [{ officer: 'ji-ling', troops: defTroops, training: 50, unit: defUnit }], commander: 'ji-ling', food: 500 },
   });
+}
+
+function besideCastle(b, u) {
+  const n = neighbors(b.castle.c, b.castle.r).find((x) => !['river'].includes(b.terrain[idx(x.c, x.r)]));
+  u.c = n.c;
+  u.r = n.r;
+}
+
+test('an empty castle can only be entered once its walls are breached', () => {
+  const state = createGame({ seed: 3 });
+  const b = siege(state, { walls: 60 });
   const att = b.units.find((u) => u.side === 'att');
   const def = b.units.find((u) => u.side === 'def');
-  // Empty the castle and place the attacker next to it.
-  def.c = 0;
-  def.r = 0;
-  att.c = b.castle.c - 1;
-  att.r = b.castle.r;
+  def.c = 0; def.r = 0; // empty the castle
+  besideCastle(b, att);
+  assert.equal(reachable(b, att).has(idx(b.castle.c, b.castle.r)), false, 'unbreached walls keep attackers out');
+  b.walls = 30; // half of 60
+  assert.ok(isBreached(b));
   assert.ok(reachable(b, att).has(idx(b.castle.c, b.castle.r)));
   doMove(state, b, att, b.castle.c, b.castle.r);
   assert.equal(b.result?.winner, 'att');
+});
+
+test('an occupied castle holds even with its walls in ruins', () => {
+  const state = createGame({ seed: 3 });
+  const b = siege(state, { walls: 0 });
+  const att = b.units.find((u) => u.side === 'att');
+  besideCastle(b, att);
+  assert.equal(reachable(b, att).has(idx(b.castle.c, b.castle.r)), false);
+});
+
+test('infantry can assault the walls; cavalry cannot', () => {
+  const state = createGame({ seed: 3 });
+  const b = siege(state, { walls: 80 });
+  const att = b.units.find((u) => u.side === 'att');
+  besideCastle(b, att);
+  assert.ok(canAssault(b, att));
+  assert.ok(doAssault(state, b, att));
+  assert.ok(b.walls < 80);
+  const b2 = siege(state, { walls: 80, attUnit: 'cav' });
+  const cav = b2.units.find((u) => u.side === 'att');
+  besideCastle(b2, cav);
+  assert.equal(canAssault(b2, cav), false);
+});
+
+test('province battlefields are fixed and attackers arrive from their direction', () => {
+  const a = provinceField('hanzhong');
+  const b = provinceField('hanzhong');
+  assert.deepEqual(a, b);
+  assert.notDeepEqual(provinceField('hanzhong').terrain, provinceField('chenliu').terrain);
+  assert.equal(approachEdge('changan', 'luoyang'), 'west');
+  assert.equal(approachEdge('luoyang', 'changan'), 'east');
 });
 
 test('battles always finish within the day limit', () => {
@@ -243,4 +287,50 @@ test('building assignments share the assignment budget; drilling is free', async
   assert.equal(none.spent, 0, 'labour-only work costs nothing');
   assert.ok(full.gained > none.gained, 'funding speeds up building work');
   assert.ok(full.spent <= full.income, 'the budget never exceeds the month’s income');
+});
+
+function openField(state, attUnit, defUnit, ter = 'plains') {
+  const b = createBattle(state, {
+    pid: 'xuchang', from: 'chenliu', walls: 50,
+    att: { force: 'cao-cao', officers: [{ officer: 'xiahou-yuan', troops: 5000, training: 70, unit: attUnit }], commander: 'xiahou-yuan', food: 500 },
+    def: { force: 'yuan-shu', officers: [{ officer: 'ji-ling', troops: 5000, training: 70, unit: defUnit }], commander: 'ji-ling', food: 500 },
+  });
+  b.terrain.fill(ter);
+  b.terrain[idx(b.castle.c, b.castle.r)] = 'castle';
+  const [a, d] = b.units;
+  a.c = 2; a.r = 2; d.c = 3; d.r = 2;
+  return { b, a, d };
+}
+
+test('cavalry charges through the target, only when fresh and with clear ground beyond', async () => {
+  const { previewCharge, doCharge, previewMelee, chargeLanding } = await import('../src/engine/battle.js');
+  const state = createGame({ seed: 21 });
+  const { b, a, d } = openField(state, 'cav', 'inf');
+  const charge = previewCharge(state, b, a, d);
+  assert.ok(charge, 'charge possible on open ground');
+  assert.ok(charge.dmg > previewMelee(state, b, a, d).dmg * 1.4, 'charging on plains hits much harder than an ordinary attack');
+  const marsh = openField(state, 'cav', 'inf', 'marsh');
+  assert.ok(previewCharge(state, marsh.b, marsh.a, marsh.d).dmg < charge.dmg * 0.5, 'a charge into marsh fizzles');
+  a.moved = true;
+  assert.equal(chargeLanding(b, a, d), null, 'a unit that has moved cannot charge');
+  a.moved = false;
+  assert.ok(doCharge(state, b, a, d));
+  assert.equal(a.c, 4, 'the cavalry ends up beyond the target');
+});
+
+test('refusing a duel costs morale across the army; a second refusal breaks the unit for the day', async () => {
+  const { doDuel, answerPendingDuel } = await import('../src/engine/battle.js');
+  const state = createGame({ seed: 22 });
+  const { b, a, d } = openField(state, 'inf', 'inf');
+  b.humanSides = { att: false, def: true };
+  const before = d.morale;
+  doDuel(state, b, a, d);
+  assert.ok(b.pendingDuel, 'the player is asked');
+  answerPendingDuel(state, b, false);
+  assert.equal(d.morale, before - 15);
+  b.day += 3;
+  a.done = false;
+  doDuel(state, b, a, d);
+  answerPendingDuel(state, b, false);
+  assert.ok(d.shakenDay >= b.day, 'twice refused, the unit loses heart');
 });

@@ -83,15 +83,29 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 - **Remit to capital**: an outlying province can send 25–75% of its income to the capital.
 - Choose the governor, and see an income, harvest and upkeep forecast for each province.
 
-**Combat (a little deeper)**
-- Hex battlefields generated from the province's terrain: plains, forest, hills, mountain, marsh,
-  rivers with fords, and a castle whose walls come from the province's Walls stat.
-- Three unit types in a rock-paper-scissors triangle. Cavalry is fast, strong on open ground and deadly
-  against archers. Infantry is steady and holds against cavalry. Archers shoot at range 2 (3 from high
-  ground) without taking return damage.
-- Zones of control, morale, training, fire that spreads with the wind (and is put out by rain), duels
-  between officers, and supplies for a 30-day campaign.
-- You win by taking the castle, routing the enemy commander, or destroying the enemy army.
+**Combat (in the spirit of the Art of War)**
+- Every province has its own fixed battlefield (terrain, rivers and fords, castle position), so you
+  learn its ground. Armies arrive from the side their home province lies on.
+- Terrain decides what each arm can do:
+  - Forest and hills give cover: better melee defence, and forest stops about half of all arrows.
+  - Marsh and fords are poor footing: defenders there are exposed to arrows and fight worse.
+  - Attacking uphill is harder; archers on high ground shoot one hex farther and hit harder.
+- Cavalry is decisive only in the right place. A **charge** (fresh cavalry that has not moved) rides
+  through the target and out the far side, and is only as good as the worst ground it crosses: across
+  open plains it hits very hard, through forest or marsh it fizzles, and the castle cannot be charged.
+  Ordinary cavalry attacks are modest. Infantry holds against cavalry; cavalry rides down archers.
+- Archers trade volleys with archers in range, and are weak in melee.
+- **Flanking**: a unit attacked while other enemies stand beside it takes more damage.
+- **The castle is a unit of its own**. Each defender turn its walls loose a free volley at every
+  attacker beside them (stronger walls, heavier volleys), while the unit inside acts normally.
+  Strong walls also shelter the garrison from arrows and blows. Infantry (and, weakly, archers) can
+  assault the walls; the castle can only be entered once the walls are breached (down to half) and it
+  is empty. An occupied castle holds even with ruined walls. Wall damage stays with the province.
+- **Duels**: refusing a challenge costs the refusing unit and the whole army morale; refuse twice and
+  that unit loses heart for a day. When challenged, you choose whether to accept, seeing the odds.
+- Your turn ends by itself when no unit has anything left to do; press End turn to finish early.
+- Morale, training, fire that spreads with the wind (put out by rain), supplies for a 30-day
+  campaign. Win by taking the castle, routing the enemy commander, or destroying the enemy army.
 - After a battle, captured officers can be recruited, released or executed.
 - Battles between two computer lords resolve instantly with the same engine. Your battles can be played
   by hand or auto-resolved.

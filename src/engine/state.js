@@ -229,7 +229,7 @@ export function strengthOf(o) {
 }
 
 export const provinceStrength = (state, pid) =>
-  officersIn(state, pid).reduce((s, o) => s + strengthOf(o), 0) * (1 + state.provinces[pid].walls / 250);
+  officersIn(state, pid).reduce((s, o) => s + strengthOf(o), 0) * (1 + state.provinces[pid].walls / 70);
 
 export const areAllied = (state, a, b) =>
   !!a && !!b && (state.forces[a]?.alliances[b] ?? 0) > monthIndex(state);

@@ -12,11 +12,11 @@ import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
 
 export const DIRECTIVES = {
-  balanced: { label: 'Balanced', desc: 'Develop steadily, keep a sound garrison, take only easy prey.', attackRatio: 1.5, claim: true },
+  balanced: { label: 'Balanced', desc: 'Develop steadily, keep a sound garrison, take only easy prey.', attackRatio: 1.7, claim: true },
   develop: { label: 'Develop economy', desc: 'Pour gold into farms, markets and dikes. Never attack.', attackRatio: null, claim: false },
   military: { label: 'Build military', desc: 'Draft and drill troops, strengthen walls. Never attack.', attackRatio: null, claim: false },
   defend: { label: 'Hold the line', desc: 'Walls, garrison and training first. Never attack.', attackRatio: null, claim: false },
-  expand: { label: 'Expand', desc: 'Build up and attack weaker neighbours when the odds are good.', attackRatio: 1.1, claim: true },
+  expand: { label: 'Expand', desc: 'Build up and attack weaker neighbours when the odds are good.', attackRatio: 1.3, claim: true },
 };
 
 function hostileNeighbors(state, pid, fid) {
@@ -81,7 +81,10 @@ function planAttack(state, pid, fid, directive) {
   let best = null;
   for (const t of hostile) {
     const defStr = provinceStrength(state, t);
-    if (armyStr < defStr * d.attackRatio) continue;
+    // Cavalry can neither breach walls nor storm a castle.
+    const walled = state.provinces[t].walls > 30;
+    const usable = walled ? army.reduce((sum, o) => sum + strengthOf(o) * (o.unit === 'cav' ? 0.5 : 1), 0) : armyStr;
+    if (usable < defStr * d.attackRatio) continue;
     const prov = state.provinces[t];
     const value = (prov.pop / 1000 + prov.farm + prov.commerce) / (defStr / 1000 + 5);
     if (!best || value > best.value) best = { t, value };

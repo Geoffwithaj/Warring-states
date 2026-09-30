@@ -5,7 +5,7 @@ import {
   officersIn, provincesOf, forceName, log, rulerOf, isFamily, capitalOf, enlist,
   strengthOf, monthIndex, areAllied, governorOf,
 } from './state.js';
-import { ADJACENT, isAdjacent, PROVINCE_BY_ID } from './map.js';
+import { ADJACENT, isAdjacent } from './map.js';
 import { createBattle, autoResolve } from './battle.js';
 import { handleRulerLoss, eliminateForce } from './succession.js';
 
@@ -75,8 +75,6 @@ export function declareWar(state, { from, to, officerIds, commanderId, food }, {
   const battle = createBattle(state, {
     pid: to,
     from,
-    provTerrain: PROVINCE_BY_ID[to].terrain,
-    river: PROVINCE_BY_ID[to].river,
     walls: dst.walls,
     att: { force: fa, officers: attackers.map(sideEntry), commander: commanderId || attackers[0].id, food },
     def: { force: fd, officers: defenders.map(sideEntry), commander: defCmd.id, food: dst.food },
@@ -173,6 +171,8 @@ export function finishBattle(state, b) {
       captives.push(o);
     }
   }
+  // Damage done to the walls stays with the province, whoever holds it now.
+  dst.walls = Math.max(0, Math.round(b.walls));
   const survivors = (side) => b.units.filter((u) => u.side === side && !u.slain && !u.captured).map((u) => state.officers[u.officer]);
   const summary = `${forceName(state, winner === 'att' ? fa : fd)} is victorious at ${dst.name}. ${reason}`;
   log(state, summary, 'war', [fa, fd]);

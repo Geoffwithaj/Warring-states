@@ -1,11 +1,14 @@
 // Tactical battle screen.
 
 import { h, s, fmt } from './dom.js';
+import { openModal } from './modal.js';
 import {
   BATTLE_W, BATTLE_H, TERRAIN, UNIT_TYPES, WIND_NAMES, idx, reachable, meleeTargets, shootTargets,
   fireTargets, activeUnits, unitAt, doMove, doAttack, doShoot, doFire, doDuel, doWait, doRetreat,
   aiStep, endPhase, phaseDone, previewMelee, previewShoot, fireChance, duelAcceptChance, canRetreat,
-  terrainAt,
+  terrainAt, chargeTargets, chargeLanding, previewCharge, doCharge, canAssault, doAssault, previewAssault,
+  isBreached, breachLevel, isCastle, castleOccupant, duelTargets, duelWinChance, answerPendingDuel,
+  unitHasOptions, garrisonVolley, GARRISON_RANGE, hexDist,
 } from '../engine/battle.js';
 import { forceName } from '../engine/state.js';
 
@@ -21,6 +24,8 @@ const UNIT_GLYPH = { inf: '⚔', cav: '♞', arc: '➶' };
 const AI_DELAY = 220;
 
 const center = (c, r) => [R * SQ3 * (c + 0.5 * (r & 1)) + (R * SQ3) / 2 + PAD, R * 1.5 * r + R + PAD];
+const pct = (p) => `${Math.round(p * 100)}%`;
+const mult = (m) => `×${m.toFixed(2).replace(/0$/, '')}`;
 
 function hexPoints(c, r, scale = 1) {
   const [x, y] = center(c, r);
@@ -51,12 +56,12 @@ export function openBattleView(state, { onFinish }) {
   root.replaceChildren(mapBox, side, resultBox);
   mapBox.style.position = 'relative';
 
-  const ui = { sel: null, mode: null, busy: false, closed: false, focus: null, armed: null };
+  const ui = { sel: null, mode: null, busy: false, closed: false, focus: null, armed: null, prompting: false };
   // Without hover, a first tap on an enemy previews the attack and a second confirms it.
   const TOUCH = window.matchMedia('(hover: none)').matches;
   const color = (u) => state.forces[b.forces[u.side]]?.color || '#999';
   const oName = (u) => state.officers[u.officer].name;
-  const isHumanTurn = () => !b.result && b.humanSides[b.side];
+  const isHumanTurn = () => !b.result && !b.pendingDuel && b.humanSides[b.side];
 
   function select(u) {
     ui.sel = u && u.side === b.side && isHumanTurn() && !u.done ? u.id : null;
@@ -67,10 +72,9 @@ export function openBattleView(state, { onFinish }) {
   }
 
   // On touch screens, returns true if this tap only armed the target.
-  function needsConfirm(target) {
-    if (!TOUCH || ui.armed === target.id) return false;
-    ui.armed = target.id;
-    ui.focus = { unit: target.id };
+  function needsConfirm(key) {
+    if (!TOUCH || ui.armed === key) return false;
+    ui.armed = key;
     render();
     return true;
   }
@@ -83,9 +87,10 @@ export function openBattleView(state, { onFinish }) {
   function afterAction() {
     ui.armed = null;
     const u = selected();
-    if (u && u.done) ui.sel = null;
+    if (u && !unitHasOptions(b, u)) ui.sel = null;
     ui.mode = null;
     if (b.result) return render();
+    if (b.pendingDuel) return promptDuel();
     if (phaseDone(b)) {
       endPhase(state, b);
       ui.sel = null;
@@ -107,28 +112,49 @@ export function openBattleView(state, { onFinish }) {
       return;
     }
     if (ui.mode === 'fire') {
-      if (doFire(state, b, u, c, r)) afterAction();
+      if (fireTargets(b, u).some((n) => n.c === c && n.r === r)) {
+        if (needsConfirm(`fire:${c},${r}`)) return;
+        doFire(state, b, u, c, r);
+        afterAction();
+      }
       return;
     }
     if (ui.mode === 'duel') {
-      if (target && meleeTargets(b, u).includes(target)) {
-        if (needsConfirm(target)) return;
+      if (target && duelTargets(b, u).includes(target)) {
+        ui.focus = { unit: target.id };
+        if (needsConfirm(target.id)) return;
         doDuel(state, b, u, target);
+        afterAction();
+      }
+      return;
+    }
+    if (ui.mode === 'charge') {
+      if (target && chargeTargets(b, u).includes(target)) {
+        ui.focus = { unit: target.id };
+        if (needsConfirm(target.id)) return;
+        doCharge(state, b, u, target);
+        afterAction();
+      }
+      return;
+    }
+    if (ui.mode === 'assault') {
+      if (isCastle(b, c, r) && canAssault(b, u)) {
+        if (needsConfirm('assault')) return;
+        doAssault(state, b, u);
         afterAction();
       }
       return;
     }
     if (target && target.side !== u.side) {
       const inReach = (u.type === 'arc' && shootTargets(b, u).includes(target)) || meleeTargets(b, u).includes(target);
+      ui.focus = { unit: target.id };
       if (!inReach) {
-        ui.focus = { unit: target.id };
         renderInfo();
         return;
       }
-      if (needsConfirm(target)) return;
+      if (needsConfirm(target.id)) return;
       if (u.type === 'arc' && shootTargets(b, u).includes(target)) doShoot(state, b, u, target);
-      else if (meleeTargets(b, u).includes(target)) doAttack(state, b, u, target);
-      else return;
+      else doAttack(state, b, u, target);
       afterAction();
       return;
     }
@@ -142,20 +168,54 @@ export function openBattleView(state, { onFinish }) {
     }
   }
 
+  // The computer has challenged one of your officers: accept or refuse.
+  function promptDuel() {
+    if (ui.prompting || !b.pendingDuel) return;
+    ui.prompting = true;
+    const challenger = b.units.find((x) => x.id === b.pendingDuel.challenger);
+    const target = b.units.find((x) => x.id === b.pendingDuel.target);
+    const a = state.officers[challenger.officer];
+    const d = state.officers[target.officer];
+    const win = 1 - duelWinChance(state, challenger, target);
+    render();
+    const answer = (accept) => {
+      ui.prompting = false;
+      answerPendingDuel(state, b, accept);
+      afterAction();
+    };
+    openModal({
+      title: 'A challenge!',
+      dismissable: false,
+      body: h('div', {},
+        h('p', {}, `${a.name} (WAR ${a.war}) rides forward and challenges ${d.name} (WAR ${d.war}) to single combat.`),
+        h('div', { class: 'preview' }, `${d.name} wins about ${pct(win)} of such duels. The loser's unit is broken, and they may be captured or slain.`),
+        h('p', { class: 'hint' }, `Refusing costs ${d.name}'s unit 15 morale and every other unit 5, and heartens the challenger. Refuse twice and the unit loses heart for a day.`)),
+      actions: [
+        { label: 'Refuse', onClick: () => answer(false) },
+        { label: `Accept (${pct(win)})`, primary: true, onClick: () => answer(true) },
+      ],
+    });
+  }
+
   function scheduleAI() {
-    if (ui.closed || b.result || isHumanTurn() || ui.busy) return;
+    if (ui.closed || b.result || isHumanTurn() || ui.busy || b.pendingDuel) return;
     ui.busy = true;
     const tick = () => {
       if (ui.closed) return;
-      if (b.result) {
+      if (b.result || isHumanTurn()) {
         ui.busy = false;
         return render();
       }
-      if (isHumanTurn()) {
+      if (b.pendingDuel) {
         ui.busy = false;
-        return render();
+        return promptDuel();
       }
       const acted = aiStep(state, b);
+      if (b.pendingDuel) {
+        ui.busy = false;
+        render();
+        return promptDuel();
+      }
       if (!acted || phaseDone(b)) endPhase(state, b);
       render();
       setTimeout(tick, acted ? AI_DELAY : AI_DELAY / 2);
@@ -176,14 +236,23 @@ export function openBattleView(state, { onFinish }) {
     scheduleAI();
   }
 
+  function setMode(mode) {
+    ui.mode = ui.mode === mode ? null : mode;
+    ui.armed = null;
+    render();
+  }
+
   // ---- Rendering ----------------------------------------------------------
 
   function render() {
     const u = selected();
     const reach = u && !ui.mode ? reachable(b, u) : new Map();
     const targets = new Set(u && !ui.mode ? [...meleeTargets(b, u), ...shootTargets(b, u)].map((t) => t.id) : []);
-    const duelT = new Set(u && ui.mode === 'duel' ? meleeTargets(b, u).map((t) => t.id) : []);
+    const modeT = new Set(u && ui.mode === 'duel' ? duelTargets(b, u).map((t) => t.id)
+      : u && ui.mode === 'charge' ? chargeTargets(b, u).map((t) => t.id) : []);
     const fireT = new Set(u && ui.mode === 'fire' ? fireTargets(b, u).map((n) => idx(n.c, n.r)) : []);
+    const armedUnit = typeof ui.armed === 'number' ? b.units.find((x) => x.id === ui.armed) : null;
+    const landing = u && ui.mode === 'charge' && armedUnit ? chargeLanding(b, u, armedUnit) : null;
 
     svg.replaceChildren();
     for (let r = 0; r < BATTLE_H; r++) {
@@ -195,8 +264,9 @@ export function openBattleView(state, { onFinish }) {
           points: hexPoints(c, r), fill: TERRAIN_COLOR[ter],
         });
         if (ter === 'castle') {
-          poly.setAttribute('stroke', '#3b2f22');
+          poly.setAttribute('stroke', isBreached(b) ? '#8a2a1a' : '#3b2f22');
           poly.setAttribute('stroke-width', '5');
+          if (ui.mode === 'assault') poly.setAttribute('stroke', '#ff5a4a');
         }
         poly.addEventListener('click', () => onHexClick(c, r));
         if (!TOUCH) poly.addEventListener('mouseenter', () => { ui.focus = { c, r }; renderInfo(); });
@@ -207,14 +277,23 @@ export function openBattleView(state, { onFinish }) {
           svg.append(s('text', { x, y: y + 6, 'text-anchor': 'middle', 'font-size': ter === 'castle' ? 22 : 14, fill: '#0005', 'pointer-events': 'none' }, TERRAIN_GLYPH[ter]));
         }
         if (b.fire[k] > 0) svg.append(s('polygon', { class: 'fire', points: hexPoints(c, r, 0.85) }));
+        if (landing && landing.c === c && landing.r === r) svg.append(s('polygon', { class: 'hex target', fill: 'none', points: hexPoints(c, r, 0.8) }));
       }
+    }
+    // The castle's walls, drawn as a bar under the castle hex.
+    {
+      const [x, y] = center(b.castle.c, b.castle.r);
+      const frac = b.wallsMax ? b.walls / b.wallsMax : 0;
+      svg.append(s('rect', { x: x - 20, y: y + R * 0.72, width: 40, height: 5, fill: '#000b', 'pointer-events': 'none' }));
+      svg.append(s('rect', { x: x - 20, y: y + R * 0.72, width: 40 * frac, height: 5, fill: isBreached(b) ? '#e0705f' : '#d9d0bc', 'pointer-events': 'none' }));
     }
     for (const unit of b.units.filter((x) => x.status === 'active')) {
       const [x, y] = center(unit.c, unit.r);
-      const g = s('g', { class: 'unit' + (unit.id === ui.sel ? ' sel' : '') + (unit.done && unit.side === b.side ? ' done' : ''), transform: `translate(${x},${y})`, style: 'cursor:pointer' });
+      const finished = unit.side === b.side && !unitHasOptions(b, unit);
+      const g = s('g', { class: 'unit' + (unit.id === ui.sel ? ' sel' : '') + (finished ? ' done' : ''), transform: `translate(${x},${y})`, style: 'cursor:pointer' });
       g.append(s('circle', { class: 'body', r: R * 0.62, fill: color(unit) }));
       if (targets.has(unit.id)) g.append(s('circle', { r: R * 0.8, fill: 'none', stroke: '#ff5a4a', 'stroke-width': 3 }));
-      if (duelT.has(unit.id)) g.append(s('circle', { r: R * 0.8, fill: 'none', stroke: '#ffd24a', 'stroke-width': 3, 'stroke-dasharray': '4 3' }));
+      if (modeT.has(unit.id)) g.append(s('circle', { r: R * 0.8, fill: 'none', stroke: ui.mode === 'charge' ? '#ffa030' : '#ffd24a', 'stroke-width': 3, 'stroke-dasharray': '4 3' }));
       g.append(s('text', { class: 'glyph', y: 4 }, UNIT_GLYPH[unit.type]));
       g.append(s('text', { class: 'uname', y: R * 0.62 + 9 }, oName(unit)));
       const frac = Math.min(1, unit.troops / Math.max(unit.startTroops, 1));
@@ -231,32 +310,60 @@ export function openBattleView(state, { onFinish }) {
     if (b.result) renderResult();
   }
 
+  function castleLine() {
+    const occ = castleOccupant(b);
+    return `Castle · walls ${Math.round(b.walls)}/${b.wallsMax}`
+      + (isBreached(b) ? ' · BREACHED' : ` · breached at ${breachLevel(b)}`)
+      + (occ ? ` · held by ${oName(occ)}` : ' · empty');
+  }
+
   function terrainLine(c, r) {
     const ter = terrainAt(b, c, r);
+    if (ter === 'castle') return castleLine();
     const burning = b.fire[idx(c, r)] > 0 ? ' · on fire!' : '';
-    return `${TERRAIN[ter].label}${ter === 'castle' ? ` · walls ${b.walls}` : ` · defence ×${TERRAIN[ter].def}`}${burning}`;
+    const t = TERRAIN[ter];
+    return `${t.label} · melee defence ×${t.def} · arrows land ×${t.cover}${burning}`;
   }
+
+  const factorList = (factors) => (factors.length
+    ? h('div', { class: 'factors' }, factors.map((f) => h('span', { class: f.mult >= 1 ? 'up' : 'down' }, `${f.why} ${mult(f.mult)}`)))
+    : null);
 
   function renderInfo() {
     const sel = selected();
     const focusUnit = ui.focus?.unit !== undefined ? b.units.find((x) => x.id === ui.focus.unit && x.status === 'active') : null;
     const u = focusUnit || sel;
     const rows = [];
-    if (u) {
+    if (ui.mode === 'assault' && sel) {
+      const p = previewAssault(state, b, sel);
+      rows.push(h('div', {}, castleLine()));
+      rows.push(h('div', { class: 'preview-line' }, `Assault: walls −${p.walls}, about ${fmt(p.loss)} of ${oName(sel)}'s men lost on the ladders.`));
+      if (ui.armed === 'assault') rows.push(h('div', { class: 'warn' }, 'Tap the castle again to confirm.'));
+    } else if (u) {
       const o = state.officers[u.officer];
       rows.push(h('div', { class: 'row' },
         h('span', { class: 'swatch', style: { background: color(u) } }),
-        h('b', {}, o.name), u.commander ? ' ★' : '', h('span', { class: 'muted' }, u.side === b.side && u.done ? '(done)' : '')));
+        h('b', {}, o.name), u.commander ? ' ★' : '', h('span', { class: 'muted' }, u.side === b.side && !unitHasOptions(b, u) ? '(done)' : '')));
       rows.push(h('div', {}, `${UNIT_TYPES[u.type].label} · ${fmt(u.troops)} troops · morale ${u.morale} · training ${u.training}`));
       rows.push(h('div', { class: 'muted' }, `INT ${o.int} · WAR ${o.war} · ${terrainLine(u.c, u.r)}`));
+      if (u.side === 'att' && b.walls > 0 && hexDist(u, b.castle) <= GARRISON_RANGE) {
+        rows.push(h('div', { class: 'warn' }, `Under the walls: the garrison will loose ~${fmt(garrisonVolley(b, u))} arrows' worth of casualties at it each defender turn.`));
+      }
       if (sel && u.side !== sel.side) {
-        if (sel.type === 'arc' && shootTargets(b, sel).includes(u)) {
-          rows.push(h('div', { class: 'preview-line' }, `${state.officers[sel.officer].name}'s volley: ~${fmt(previewShoot(state, b, sel, u).dmg)} casualties, no losses`));
+        if (ui.mode === 'duel' && duelTargets(b, sel).includes(u)) {
+          rows.push(h('div', { class: 'preview-line' }, `Duel: ${oName(sel)} wins ~${pct(duelWinChance(state, sel, u))}; ${o.name} accepts ~${pct(duelAcceptChance(state, sel, u))} of the time.`));
+        } else if (ui.mode === 'charge' && chargeTargets(b, sel).includes(u)) {
+          const p = previewCharge(state, b, sel, u);
+          rows.push(h('div', { class: 'preview-line' }, `Charge: ~${fmt(p.dmg)} dealt, ~${fmt(p.counter)} taken; rides through to the far side.`));
+          rows.push(factorList(p.factors));
+        } else if (sel.type === 'arc' && shootTargets(b, sel).includes(u)) {
+          const p = previewShoot(state, b, sel, u);
+          rows.push(h('div', { class: 'preview-line' }, `Volley: ~${fmt(p.dmg)} casualties${p.counter ? `, ~${fmt(p.counter)} lost to return fire` : ''}`));
+          rows.push(factorList(p.factors));
         } else if (meleeTargets(b, sel).includes(u)) {
           const p = previewMelee(state, b, sel, u);
-          rows.push(h('div', { class: 'preview-line' }, ui.mode === 'duel'
-            ? `Duel: ${o.name} accepts ~${Math.round(duelAcceptChance(state, sel, u) * 100)}% of the time`
-            : `Attack: ~${fmt(p.dmg)} dealt, ~${fmt(p.counter)} taken`));
+          rows.push(h('div', { class: 'preview-line' }, `Attack: ~${fmt(p.dmg)} dealt, ~${fmt(p.counter)} taken`));
+          rows.push(factorList(p.factors));
         } else {
           rows.push(h('div', { class: 'muted' }, 'Out of reach.'));
         }
@@ -264,38 +371,56 @@ export function openBattleView(state, { onFinish }) {
       }
     } else if (ui.focus && ui.focus.c !== undefined) {
       rows.push(h('div', {}, terrainLine(ui.focus.c, ui.focus.r)));
+      if (typeof ui.armed === 'string' && ui.armed.startsWith('fire:')) rows.push(h('div', { class: 'warn' }, 'Tap again to set the fire.'));
     } else {
       rows.push(h('div', { class: 'muted' }, TOUCH ? 'Tap a unit or hex for details.' : 'Point at a unit or hex for details.'));
     }
-    info.replaceChildren(...rows);
+    info.replaceChildren(...rows.filter(Boolean));
   }
 
   function renderSide(u) {
     const attName = forceName(state, b.forces.att);
     const defName = forceName(state, b.forces.def);
     const turnName = b.side === 'att' ? attName : defName;
+    const pending = activeUnits(b, b.side).filter((x) => unitHasOptions(b, x)).length;
     top.replaceChildren(
       h('h2', { style: { fontSize: '19px' } }, `Battle of ${state.provinces[b.pid].name}`),
       h('div', {}, `Day ${Math.min(b.day, b.maxDays)} / ${b.maxDays} · ${b.weather[0].toUpperCase() + b.weather.slice(1)} · wind from the ${WIND_NAMES[b.wind]}`),
       h('div', { class: 'hint' }, `Attacker ${attName}: food ${fmt(b.attFood)} · Defender ${defName}: food ${fmt(b.defFood)}`),
+      h('div', { class: 'hint' }, castleLine()),
       h('div', { style: { marginTop: '4px' } }, h('span', { class: 'swatch', style: { background: state.forces[b.forces[b.side]].color } }), ` ${turnName}'s turn`,
-        isHumanTurn() ? '' : h('span', { class: 'muted' }, ' (thinking…)')),
+        isHumanTurn() ? h('span', { class: 'muted' }, ` · ${pending} unit${pending === 1 ? '' : 's'} can still act`) : h('span', { class: 'muted' }, ' (thinking…)')),
     );
     const content = [];
     if (u) {
       const canFire = fireTargets(b, u).length > 0;
-      const canDuel = meleeTargets(b, u).length > 0;
+      const canDuel = duelTargets(b, u).length > 0;
+      const canCharge = chargeTargets(b, u).length > 0;
+      const assault = canAssault(b, u);
       const retreatOk = canRetreat(b, u, state, b.retreatOptions);
+      const btn = (label, mode, enabled, title) => h('button', {
+        class: 'small' + (ui.mode === mode ? ' primary' : ''), disabled: !enabled, title, onclick: () => setMode(mode),
+      }, label);
       content.push(h('div', { class: 'row', style: { marginTop: '6px' } },
-        h('button', { class: 'small' + (ui.mode === 'fire' ? ' primary' : ''), disabled: !canFire, title: `Success ~${Math.round(fireChance(state, b, u) * 100)}%`, onclick: () => { ui.mode = ui.mode === 'fire' ? null : 'fire'; render(); } }, `Fire (${Math.round(fireChance(state, b, u) * 100)}%)`),
-        h('button', { class: 'small' + (ui.mode === 'duel' ? ' primary' : ''), disabled: !canDuel, onclick: () => { ui.mode = ui.mode === 'duel' ? null : 'duel'; render(); } }, 'Duel'),
+        u.type === 'cav' ? btn('Charge', 'charge', canCharge, 'Only a fresh unit can charge, and it must have clear ground on the far side of the target') : null,
+        u.side === 'att' && u.type !== 'cav' ? btn('Assault walls', 'assault', assault, 'Batter the castle walls from an adjacent hex') : null,
+        btn(`Fire (${pct(fireChance(state, b, u))})`, 'fire', canFire, 'Set an adjacent hex ablaze'),
+        btn('Duel', 'duel', canDuel, 'Challenge an adjacent officer to single combat'),
         h('button', { class: 'small', onclick: () => { doWait(b, u); afterAction(); } }, 'Wait'),
         h('button', { class: 'small danger', disabled: !retreatOk, onclick: () => { doRetreat(state, b, u); afterAction(); } }, 'Withdraw')));
-      content.push(h('p', { class: 'hint' }, ui.mode === 'fire' ? 'Click a highlighted hex to set it ablaze. Fire spreads with the wind.'
-        : ui.mode === 'duel' ? 'Click an adjacent enemy officer to challenge them.'
-          : u.type === 'arc' ? `Move (blue hexes), then ${TOUCH ? 'tap' : 'click'} an enemy in range to loose arrows.` : `Move (blue hexes), then ${TOUCH ? 'tap' : 'click'} an adjacent enemy to attack.${TOUCH ? ' Tap once to preview, again to strike.' : ''}`));
+      const tap = TOUCH ? 'tap' : 'click';
+      content.push(h('p', { class: 'hint' }, {
+        fire: `${tap[0].toUpperCase() + tap.slice(1)} a highlighted hex to set it ablaze. Fire spreads with the wind and burns hardest in forest.`,
+        duel: `${tap[0].toUpperCase() + tap.slice(1)} an adjacent enemy officer to challenge them.`,
+        charge: `${tap[0].toUpperCase() + tap.slice(1)} an enemy to charge through it. The charge is only as good as the worst ground it crosses.`,
+        assault: `${tap[0].toUpperCase() + tap.slice(1)} the castle to assault its walls. They are breached at half strength; only then can an empty castle be entered.`,
+      }[ui.mode] || (u.moved
+        ? 'This unit has moved; it can still attack, shoot, set a fire or assault the walls, or Wait.'
+        : u.type === 'arc' ? `Move (blue hexes), then ${tap} an enemy in range to loose arrows.`
+          : u.type === 'cav' ? `Charge from where you stand, or move and make an ordinary attack.${TOUCH ? ' Tap once to preview, again to strike.' : ''}`
+            : `Move (blue hexes), then ${tap} an adjacent enemy to attack.${TOUCH ? ' Tap once to preview, again to strike.' : ''}`)));
     } else if (isHumanTurn()) {
-      content.push(h('p', { class: 'hint' }, 'Select one of your units. Each unit may move and then act once per day.'));
+      content.push(h('p', { class: 'hint' }, 'Select one of your units. Each unit may move and then act once per day. Your turn ends by itself when no unit has anything left to do.'));
     }
     const controls = h('div', { class: 'row', style: { marginTop: '6px' } },
       h('button', { class: 'primary', disabled: !isHumanTurn(), onclick: endTurn }, 'End turn'),
@@ -306,16 +431,17 @@ export function openBattleView(state, { onFinish }) {
         class: 'u' + (x.status !== 'active' ? ' gone' : ''),
         onclick: () => x.status === 'active' && select(x),
       }, h('span', { class: 'swatch', style: { background: color(x) } }), `${oName(x)}${x.commander ? ' ★' : ''}`, h('span', { class: 'spacer' }),
-      h('span', { class: 'muted' }, x.status === 'active' ? `${fmt(x.troops)} · m${x.morale}${x.done && x.side === b.side ? ' ✓' : ''}` : x.status)))));
-    mid.replaceChildren(...content, controls, ...lists);
+      h('span', { class: 'muted' }, x.status === 'active' ? `${fmt(x.troops)} · m${x.morale}${x.side === b.side && !unitHasOptions(b, x) ? ' ✓' : ''}` : x.status)))));
+    mid.replaceChildren(...content.filter(Boolean), controls, ...lists);
     logBox.replaceChildren(...b.log.slice(-60).reverse().map((l) => h('div', {}, l)));
   }
 
   function renderResult() {
-    const humanWon = b.humanSides.att !== undefined && state.forces[b.forces[b.result.winner]]?.human;
+    const humanWon = state.forces[b.forces[b.result.winner]]?.human;
     resultBox.replaceChildren(h('div', { class: 'battle-result' },
       h('h2', {}, humanWon ? 'Victory!' : state.forces[b.forces[b.result.winner === 'att' ? 'def' : 'att']]?.human ? 'Defeat' : 'Battle over'),
       h('p', {}, `${forceName(state, b.forces[b.result.winner])} wins. ${b.result.reason}`),
+      h('p', { class: 'hint' }, `The walls of ${state.provinces[b.pid].name} stand at ${Math.round(b.walls)} of ${b.wallsMax}.`),
       h('button', { class: 'primary', onclick: close }, 'Continue')));
   }
 
@@ -327,5 +453,6 @@ export function openBattleView(state, { onFinish }) {
   }
 
   render();
-  scheduleAI();
+  if (b.pendingDuel) promptDuel();
+  else scheduleAI();
 }
