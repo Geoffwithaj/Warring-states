@@ -620,7 +620,7 @@ function meleeFactors(b, a, d, charge, counter = false) {
   const sallied = counter && dTer === 'castle';
   if (!sallied) push(1 / meleeDefence(b, d), dTer === 'castle' ? `castle walls (${Math.round(b.walls)})` : `${TERRAIN[dTer].label.toLowerCase()} defence`);
   // Flanking: every other enemy of the target standing beside it adds to the blow.
-  if (!counter && dTer !== 'castle') {
+  if (!counter && (dTer !== 'castle' || isBreached(b))) {
     const flankers = neighbors(d.c, d.r).map((n) => unitAt(b, n.c, n.r)).filter((x) => x && x !== a && x.side === a.side).length;
     if (flankers) push(1 + 0.15 * Math.min(3, flankers), `flanked by ${flankers} more unit${flankers > 1 ? 's' : ''}`);
   }
@@ -636,7 +636,9 @@ export function previewMelee(state, b, a, d, charge = null) {
   // The defender strikes back; a charge that rides through is hard to punish.
   const counterMod = (d.type === 'arc' ? 0.5 : 1) * (charge ? (d.type === 'inf' ? 0.8 : 0.5) : 1);
   const back = meleeFactors(b, d, a, null, true).filter((x) => !/attacking uphill|no room to charge/.test(x.why));
-  const counter = d.troops * 0.035 * (1 / r) * product(back) * counterMod;
+  // A unit pressed from several sides in one turn cannot strike back at each
+  // attacker with its full weight.
+  const counter = d.troops * 0.035 * (1 / r) * product(back) * counterMod / (1 + PRESSED * pressedCount(b, d));
   return { dmg: Math.min(d.troops, Math.round(dmg)), counter: Math.min(a.troops, Math.round(counter)), factors };
 }
 
@@ -725,11 +727,21 @@ export function doMove(state, b, u, c, r) {
   return true;
 }
 
+// Attacks a unit has already taken this turn, which weaken its counter-blows.
+export const PRESSED = 0.35;
+const turnKey = (b) => `${b.day}:${b.side}`;
+export const pressedCount = (b, d) => (d.pressedTurn === turnKey(b) ? d.pressed : 0);
+function markPressed(b, d) {
+  d.pressed = pressedCount(b, d) + 1;
+  d.pressedTurn = turnKey(b);
+}
+
 export function doAttack(state, b, u, t) {
   if (!meleeTargets(b, u).includes(t)) return false;
   const { dmg, counter } = previewMelee(state, b, u, t);
   u.done = true;
   exchange(state, b, u, t, dmg, counter, 'attacks');
+  markPressed(b, t);
   if (isCastle(b, u.c, u.r)) u.salliedDay = b.day;
   return true;
 }
@@ -742,6 +754,7 @@ export function doCharge(state, b, u, t) {
   u.moved = true;
   t.morale = clamp(t.morale - (p.factors.some((x) => x.why === 'charge across open ground') ? 10 : 3), 0, 100);
   exchange(state, b, u, t, p.dmg, p.counter, 'charges into');
+  markPressed(b, t);
   if (u.status === 'active') {
     u.c = p.land.c;
     u.r = p.land.r;
@@ -1011,14 +1024,18 @@ export const GARRISON_RANGE = 1;
 
 // The walls' volley needs men on the walls: a full garrison (5,000 or more in
 // the castle) shoots at full strength, a token one at a quarter.
-export const WALL_VOLLEY = 3;
+// Arrows per point of wall the whole garrison can loose in a day, shared out
+// among every attacker beside the castle: surrounding it spreads the volley.
+export const WALL_VOLLEY = 4.5;
 export function wallManning(b) {
   const occ = castleOccupant(b);
   return occ && occ.side === 'def' ? clamp(occ.troops / 5000, 0.25, 1) : 0.25;
 }
+export const volleyTargets = (b) => activeUnits(b, 'att').filter((x) => hexDist(x, b.castle) <= GARRISON_RANGE);
 export function garrisonVolley(b, u) {
   if (b.walls <= 0) return 0;
-  return Math.min(u.troops, Math.round(b.walls * WALL_VOLLEY * wallManning(b) * arrowCover(b, u) * (b.weather === 'rain' ? 0.5 : 1)));
+  const shared = Math.max(1, volleyTargets(b).filter((x) => x !== u).length + 1);
+  return Math.min(u.troops, Math.round(b.walls * WALL_VOLLEY * wallManning(b) * arrowCover(b, u) * (b.weather === 'rain' ? 0.5 : 1) / shared));
 }
 // The castle is surrounded when every open hex around it is held by an
 // attacker or covered by one beside it, with no defender among them: three
@@ -1050,7 +1067,7 @@ function encirclement(state, b) {
 function wallGarrison(state, b) {
   encirclement(state, b);
   if (b.result || b.walls <= 0) return;
-  const hit = activeUnits(b, 'att').filter((u) => hexDist(u, b.castle) <= GARRISON_RANGE);
+  const hit = volleyTargets(b);
   if (!hit.length) return;
   const losses = [];
   for (const u of hit) {
@@ -1145,7 +1162,7 @@ function bestAttack(state, b, u) {
     const { dmg, counter } = previewMelee(state, b, u, t);
     // Once the walls are breached, storming the garrison is worth real losses.
     // The commander storms only if there is no other foot soldier to do it.
-    const storming = u.side === 'att' && isCastle(b, t.c, t.r) && isBreached(b) && (!u.commander || !hasSiegeCrew(b, u));
+    const storming = u.side === 'att' && isCastle(b, t.c, t.r) && isBreached(b) && (!u.commander || !crewCanCarry(b, u));
     const s = storming ? (dmg >= counter * 0.5 ? dmg : -1) : scoreTarget(state, b, u, t, dmg) - counter * tradeWeight(b, u);
     if (!best || s > best.s) best = { kind: 'melee', t, s };
   }
@@ -1268,7 +1285,7 @@ function positionScore(state, b, u, node, goal, field) {
   if (site && !site.razed) s -= u.side === 'att' && !u.commander ? 6 : 3;
   // The attacking commander stays out of the garrison's reach until the castle
   // is open, unless nobody else can storm it.
-  if (u.side === 'att' && u.commander && hasSiegeCrew(b, u) && !(isBreached(b) && !castleOccupant(b))) {
+  if (u.side === 'att' && u.commander && crewCanCarry(b, u) && !(isBreached(b) && !castleOccupant(b))) {
     const d = hexDist(node, b.castle);
     if (d <= GARRISON_RANGE) s += 60;
   }
@@ -1316,7 +1333,7 @@ export function aiStep(state, b) {
   }
   // Otherwise keep battering the walls: every point lost weakens the defence.
   // The commander directs the siege rather than joining the assault.
-  if (canAssault(b, u) && (!u.commander || !hasSiegeCrew(b, u))) {
+  if (canAssault(b, u) && (!u.commander || !crewCanCarry(b, u))) {
     doAssault(state, b, u);
     return true;
   }
@@ -1345,7 +1362,7 @@ export function aiStep(state, b) {
         perform(state, b, u, atk);
         return true;
       }
-      if (canAssault(b, u) && (!u.commander || !hasSiegeCrew(b, u))) {
+      if (canAssault(b, u) && (!u.commander || !crewCanCarry(b, u))) {
         doAssault(state, b, u);
         return true;
       }
@@ -1357,6 +1374,14 @@ export function aiStep(state, b) {
 
 // Infantry other than this unit that can batter and storm the castle.
 const hasSiegeCrew = (b, u) => activeUnits(b, 'att').some((x) => x !== u && x.type === 'inf');
+
+// The commander may direct the siege from a safe distance only while the
+// rest of his infantry clearly outweighs the garrison; otherwise he joins in.
+function crewCanCarry(b, u) {
+  const crew = activeUnits(b, 'att').filter((x) => x !== u && x.type === 'inf').reduce((sum, x) => sum + x.troops, 0);
+  const occ = castleOccupant(b);
+  return crew > 0 && crew >= (occ?.side === 'def' ? occ.troops : 0) * 1.5;
+}
 
 // Only the garrison is left behind walls nobody on our side can breach.
 function hopelessSiege(b, u) {

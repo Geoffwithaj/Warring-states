@@ -99,11 +99,14 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   open plains it hits very hard, through forest or marsh it fizzles, and the castle cannot be charged.
   Ordinary cavalry attacks are modest. Infantry holds against cavalry; cavalry rides down archers.
 - Archers trade volleys with archers in range, and are weak in melee.
-- **Flanking**: a unit attacked while other enemies stand beside it takes more damage.
+- **Flanking**: a unit attacked while other enemies stand beside it takes more damage (a garrison
+  too, once its walls are breached), and a unit attacked several times in one turn strikes back less
+  hard each time.
 - **The castle is a unit of its own**. Each defender turn its walls loose a free volley at every
   attacker beside them (stronger walls, heavier volleys), while the unit inside acts normally.
-  The volley needs men on the walls: a full garrison (5,000 or more) shoots at full strength, a token
-  one at a quarter. Strong walls also shelter the garrison from arrows and blows; once breached they
+  The volley needs men on the walls — a full garrison (5,000 or more) shoots at full strength, a token
+  one at a quarter — and it is shared among all the attackers beside the castle, so surrounding the
+  walls spreads it thin. Strong walls also shelter the garrison from arrows and blows; once breached they
   are rubble and shelter it half as well. The unit holding the castle may strike out only every
   other day. **Encirclement**: when every open hex beside the castle is held by an attacker or covered
   by one next to it (three units spaced around the walls will do), the cut-off garrison loses heart
