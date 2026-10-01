@@ -29,6 +29,18 @@ takes up an arm, whatever the size of his unit, and keeps the gear.)
 - **Cache-proof updates**: show a version label on the title screen, and make new versions load fresh
   instead of mixing with cached files.
 
+## Art direction (agreed)
+
+- **Organic ink wash** for the battle map: watercolour pools that merge across hexes, rivers as one
+  brush ribbon, mountain ranges, rolling hills, pines and broad-leaved trees, paddy patchwork, red
+  roofs, parchment and a faint dotted grid. Units are brush-drawn emblems (Han horse's head, ji and
+  shield, recurve bow) on discs washed in the lord's colour; the commander carries a banner.
+  Preview: `docs/art/tile-preview.html` (serve the folder and open it), stills in `docs/art/`.
+- Still to do when it is built: troop counts on tokens, a faded look for units that have acted,
+  movement and target highlights in ink tones, fire and razed fields, castle damage, a bolder ji,
+  phone-size checks, and fixing the battlefield generator so rivers never skip a hex. Possibly the
+  strategic map in the same style.
+
 ## Ideas
 
 - **Wear a castle down before battle**: plots to sabotage walls or stir desertion in the garrison;
