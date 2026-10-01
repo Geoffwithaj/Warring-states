@@ -24,7 +24,7 @@ export const TERRAIN = {
   marsh: { label: 'Marsh', cost: { inf: 3, cav: 4, arc: 3 }, def: 0.85, cover: 1.25, footing: 0.8, flammable: 0 },
   river: { label: 'River', cost: null, def: 1, cover: 1, footing: 1, flammable: 0 },
   ford: { label: 'Ford', cost: { inf: 2, cav: 2, arc: 2 }, def: 0.8, cover: 1.2, footing: 0.8, flammable: 0 },
-  castle: { label: 'Castle', cost: { inf: 1, cav: 1, arc: 1 }, def: 1.3, cover: 1.0, footing: 1.0, flammable: 0.1 },
+  castle: { label: 'Castle', cost: { inf: 1, cav: 1, arc: 1 }, def: 1.15, cover: 1.0, footing: 1.0, flammable: 0.1 },
 };
 
 const HIGH_GROUND = new Set(['hills', 'mountain', 'castle']);
@@ -581,7 +581,8 @@ const ratio = (a, d) => clamp(Math.pow(a / d, 0.8), 0.35, 2.8);
 // Melee defence of a unit where it stands; the castle's depends on its walls.
 function meleeDefence(b, u) {
   const ter = terrainAt(b, u.c, u.r);
-  if (ter === 'castle') return TERRAIN.castle.def + b.walls / 100;
+  // Breached walls are rubble: they shelter the garrison only half as well.
+  if (ter === 'castle') return TERRAIN.castle.def + b.walls / (isBreached(b) ? 200 : 100);
   return TERRAIN[ter].def;
 }
 
@@ -805,9 +806,9 @@ export function duelTargets(b, u) {
 export function duelAcceptChance(state, b, challenger, target) {
   const odds = 1 - duelWinChance(state, challenger, target);
   if (isCastle(b, target.c, target.r)) return odds >= 0.6 ? 0.85 : 0.03;
-  const a = state.officers[challenger.officer];
-  const d = state.officers[target.officer];
-  const base = d.war >= a.war - 8 ? 0.85 : d.war >= a.war - 20 ? 0.35 : 0.12;
+  // In the open a refusal shames the army, so fair odds are taken up; long
+  // odds rarely are.
+  const base = odds >= 0.45 ? 0.85 : odds >= 0.25 ? 0.3 : 0.08;
   return target.commander && odds < 0.5 ? base / 3 : base;
 }
 
@@ -1000,9 +1001,16 @@ export function endPhase(state, b) {
 // castle, on top of whatever the unit inside does.
 export const GARRISON_RANGE = 1;
 
+// The walls' volley needs men on the walls: a full garrison (5,000 or more in
+// the castle) shoots at full strength, a token one at a quarter.
+export const WALL_VOLLEY = 3;
+export function wallManning(b) {
+  const occ = castleOccupant(b);
+  return occ && occ.side === 'def' ? clamp(occ.troops / 5000, 0.25, 1) : 0.25;
+}
 export function garrisonVolley(b, u) {
   if (b.walls <= 0) return 0;
-  return Math.min(u.troops, Math.round(b.walls * 4 * arrowCover(b, u) * (b.weather === 'rain' ? 0.5 : 1)));
+  return Math.min(u.troops, Math.round(b.walls * WALL_VOLLEY * wallManning(b) * arrowCover(b, u) * (b.weather === 'rain' ? 0.5 : 1)));
 }
 function wallGarrison(state, b) {
   if (b.walls <= 0) return;

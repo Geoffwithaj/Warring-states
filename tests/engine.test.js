@@ -528,3 +528,48 @@ test('a unit engaged by an enemy cannot raze the tile it stands on', () => {
   Object.assign(d, { c: next.c, r: next.r });
   assert.equal(canRaze(b, u), false);
 });
+
+test('changing arm cannot be dodged by emptying a unit: transfers and drafts pay for equipment', async () => {
+  const { changeUnitType, transferTroops, unitChangeCost } = await import('../src/engine/commands.js');
+  const state = createGame({ humanRulers: ['cao-cao'], seed: 42 });
+  newGameStart(state);
+  advance(state);
+  const p = state.provinces.chenliu;
+  p.gold = 10000;
+  const [a, b] = officersIn(state, 'chenliu').filter((o) => o.troops > 0);
+  a.unit = 'inf';
+  b.unit = 'inf';
+  const troops = b.troops;
+  // Empty b, convert it, and move the troops back: each step costs.
+  assert.ok(transferTroops(state, 'chenliu', b.id, a.id, troops).ok);
+  const moved = troops - b.troops;
+  assert.equal(unitChangeCost(state, 'chenliu', b, 'cav'), 200, 'even an empty unit pays the flat fee');
+  let gold = p.gold;
+  assert.ok(changeUnitType(state, 'chenliu', b.id, 'cav').ok);
+  assert.equal(p.gold, gold - 200);
+  gold = p.gold;
+  assert.ok(transferTroops(state, 'chenliu', a.id, b.id, moved).ok);
+  assert.equal(p.gold, gold - Math.ceil(moved / 10), 'infantry joining a cavalry unit need horses');
+  // Drafting straight into cavalry costs more than into infantry.
+  gold = p.gold;
+  b.troops = 0;
+  assert.ok(playerCommand(state, 'draft', { officer: b.id, troops: 1000 }).ok);
+  assert.equal(gold - p.gold, 100 + 100);
+});
+
+test('a strong army takes a well-walled castle at a bearable price', () => {
+  let wins = 0, lost = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const state = createGame({ seed });
+    const b = createBattle(state, {
+      pid: 'puyang', from: 'pingyuan', walls: 90,
+      att: { force: 'liu-bei', officers: ['guan-yu', 'zhang-fei', 'zhao-yun', 'liu-bei'].map((officer) => ({ officer, troops: 4500, training: 80, unit: 'inf' })), commander: 'liu-bei', food: 3000 },
+      def: { force: 'cao-cao', officers: [{ officer: 'xiahou-dun', troops: 6000, training: 80, unit: 'inf' }], commander: 'xiahou-dun', food: 9000 },
+    });
+    autoResolve(state, b);
+    if (b.result.winner === 'att') wins++;
+    lost += 1 - b.units.filter((u) => u.side === 'att').reduce((s, u) => s + u.troops, 0) / 18000;
+  }
+  assert.ok(wins >= 11, `3:1 against walls of 90 should almost always win (${wins}/12)`);
+  assert.ok(lost / 12 < 0.4, `and cost well under half the army (${Math.round(lost / 12 * 100)}%)`);
+});

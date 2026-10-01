@@ -102,7 +102,9 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
 - **Flanking**: a unit attacked while other enemies stand beside it takes more damage.
 - **The castle is a unit of its own**. Each defender turn its walls loose a free volley at every
   attacker beside them (stronger walls, heavier volleys), while the unit inside acts normally.
-  Strong walls also shelter the garrison from arrows and blows. Infantry (and, weakly, archers) can
+  The volley needs men on the walls: a full garrison (5,000 or more) shoots at full strength, a token
+  one at a quarter. Strong walls also shelter the garrison from arrows and blows; once breached they
+  are rubble and shelter it half as well. Infantry (and, weakly, archers) can
   assault the walls; the castle can only be entered once the walls are breached (down to half) and it
   is empty. An occupied castle holds even with ruined walls. Wall damage stays with the province.
 - **Duels**: War decides them steeply — close matches are risky, a wide gap rarely loses. Refusing a

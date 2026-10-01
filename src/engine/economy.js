@@ -99,12 +99,22 @@ export function trainGain(o, master, totalTroops = o.troops) {
   return Math.max(0, Math.round((4 + master.war / 8) * (1 - o.training / 105) * drillEffect(master, totalTroops)));
 }
 
-export const draftCost = (troops) => Math.ceil(troops / 10);
+// Gold per soldier to arm them as cavalry or archers (infantry kit is free).
+// Horses are cheaper where they are bred.
+export function equipPerSoldier(pid, unit) {
+  if (unit === 'cav') return PROVINCE_BY_ID[pid]?.horses ? 1 / 25 : 1 / 10;
+  if (unit === 'arc') return 1 / 40;
+  return 0;
+}
+export const equipCost = (pid, unit, troops) => Math.ceil(troops * equipPerSoldier(pid, unit));
+
+// Recruits for a unit pay their wages plus their arm's equipment.
+export const draftCost = (troops, pid = null, unit = 'inf') => Math.ceil(troops / 10) + (pid ? equipCost(pid, unit, troops) : 0);
 
 export function maxDraft(state, pid, o) {
   const p = state.provinces[pid];
   const byCap = troopCap(o) - o.troops;
-  const byGold = p.gold * 10;
+  const byGold = p.gold / (1 / 10 + equipPerSoldier(pid, o.unit));
   const byPop = Math.max(0, p.pop - 30000) / 4;
   return Math.max(0, Math.floor(Math.min(byCap, byGold, byPop) / 100) * 100);
 }

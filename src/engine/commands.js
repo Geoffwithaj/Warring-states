@@ -9,7 +9,7 @@ import {
 } from './state.js';
 import { isAdjacent, PROVINCE_BY_ID } from './map.js';
 import {
-  DEV_FIELDS, TAX, TASKS, fieldMax, devGain, reliefGain, trainGain, draftCost, maxDraft, skill,
+  DEV_FIELDS, TAX, TASKS, fieldMax, devGain, reliefGain, trainGain, draftCost, maxDraft, skill, equipCost,
 } from './economy.js';
 import { declareWar, validateWar, recruitChance, recruitCaptive, imprison } from './war.js';
 import {
@@ -70,7 +70,8 @@ export const COMMANDS = {
     troops = Math.floor(troops / 100) * 100;
     if (!o || troops <= 0) return fail('Invalid draft.');
     if (troops > maxDraft(state, pid, o)) return fail('Cannot draft that many.');
-    const cost = draftCost(troops);
+    const cost = draftCost(troops, pid, o.unit);
+    if (cost > p.gold) return fail('Not enough gold.');
     p.gold -= cost;
     p.pop -= troops;
     p.order = clamp(p.order - Math.ceil(troops / 1000) * 2, 0, 100);
@@ -335,18 +336,26 @@ export function transferTroops(state, pid, fromId, toId, amount) {
   const room = troopCap(b) - b.troops;
   amount = Math.min(amount, room);
   if (amount <= 0) return fail(`${b.name} cannot command more troops.`);
+  // Soldiers joining another arm must be equipped for it.
+  const cost = transferCost(pid, a, b, amount);
+  const p = state.provinces[pid];
+  if (cost > p.gold) return fail(`Equipping them for ${b.name}'s unit needs ${cost} gold.`);
+  p.gold -= cost;
   b.training = Math.round((b.troops * b.training + amount * a.training) / (b.troops + amount));
   a.troops -= amount;
   b.troops += amount;
-  return ok(`${amount} troops transferred from ${a.name} to ${b.name}.`);
+  return ok(`${amount} troops transferred from ${a.name} to ${b.name}${cost ? ` and equipped for ${cost} gold` : ''}.`);
 }
 
+// Re-forming a unit as another arm: a flat fee for retraining and
+// reorganising, plus equipment for every soldier in it.
+export const UNIT_CHANGE_FEE = 200;
 export function unitChangeCost(state, pid, o, type) {
-  if (type === o.unit || type === 'inf') return 0;
-  const horses = PROVINCE_BY_ID[pid].horses;
-  if (type === 'cav') return Math.ceil(o.troops / (horses ? 25 : 10));
-  return Math.ceil(o.troops / 40);
+  if (type === o.unit) return 0;
+  return UNIT_CHANGE_FEE + equipCost(pid, type, o.troops);
 }
+
+export const transferCost = (pid, from, to, amount) => (from.unit === to.unit ? 0 : equipCost(pid, to.unit, amount));
 
 export function changeUnitType(state, pid, oid, type) {
   const o = here(state, pid, oid);
