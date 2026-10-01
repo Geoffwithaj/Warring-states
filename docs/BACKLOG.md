@@ -2,6 +2,16 @@
 
 Known issues and agreed next steps, in rough priority order. Done items move to the commit log.
 
+## Design principles
+
+- **Realism through stylization.** Rules should evoke how war worked (the Art of War, the novel)
+  without simulating it: simple, legible mechanics over exhaustive detail.
+- **Many defenders, not one.** A province is held by several units; one unit alone, even behind high
+  walls, should fall to a reasonable force. Defenders need not all crowd into the castle.
+- **Castles protect, they don't punish.** Walls shelter the garrison (arrows, melee, entry), but the
+  castle's own damage stays modest: a shared volley, sallies only every other day, weaker blows when
+  pressed, and a surrounded garrison loses heart.
+
 ## Known exploits
 
 None open. (Free cavalry conversion was closed: a general pays a flat 200 gold the first time he
