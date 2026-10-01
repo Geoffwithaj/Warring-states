@@ -114,14 +114,19 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   campaign. Win by taking the castle, routing the enemy commander, or destroying the enemy army.
 - **Raiding**: battle is battle — a couple of fast units can go in to burn and plunder instead of
   laying siege. Developed fields and markets appear on the battlefield (the first six markets ring the
-  castle; fields follow the rivers outward from the city). A unit that *starts* its turn on one can
-  **Raze** it: a field gives 150 grain to the army's supplies, a market 40 gold carried by the unit, and
+  castle; fields follow the rivers outward from the city). A unit that *starts* its turn on one, with
+  no enemy beside it, can **Raze** it: a field gives 150 grain to the army's supplies, a market 40 gold carried by the unit, and
   the province loses that tile's development (and a little order and population) until it is rebuilt.
   Computer lords raid neighbours they cannot yet conquer, mostly before the harvest.
 - **Withdrawing**: leaving from your own edge of the map is orderly and free — troops and plunder go
   home. Defenders can leave by any other edge if a friendly province lies beyond. Units that rout lose
   men and their plunder, and plunder taken back from captured officers returns to the province. If the
   commander withdraws, the rest fall back with 10% losses; if the commander is broken, they rout (40%).
+- **Hold or pillage**: when your attack wins a province you choose to hold it, or to pillage it — carry
+  off 70% of its gold and grain and your prisoners, and march home, leaving it to its lord. Computer
+  raiders pillage unless the land is their war goal, their homeland, or easily held.
+- A lord who leads an army abroad heads home to his seat on his next turn; the realm's usual
+  balancing moves the other officers as threats require.
 - **Defender deployment**: as in RTK II, the defender places its units before the first day, anywhere
   but the attackers' approach; the commander holds the castle. With few units you choose what to guard.
 - After a battle, captured officers can be recruited, released or executed.

@@ -119,3 +119,58 @@ test('a commander with no infantry left leads the army home rather than waiting 
   assert.match(b.result.reason, /withdraws in good order/);
   assert.ok(b.day < 30);
 });
+
+test('a victor may pillage instead of holding: treasury and granary stripped, army and prisoners home', async () => {
+  const { finishBattle } = await import('../src/engine/war.js');
+  const state = createGame({ humanRulers: ['cao-cao'], seed: 5 });
+  const pid = ADJACENT.chenliu.find((n) => state.provinces[n].owner && state.provinces[n].owner !== 'cao-cao' && officersIn(state, n).length);
+  const dst = state.provinces[pid];
+  const src = state.provinces.chenliu;
+  const fd = dst.owner;
+  dst.gold = 1000;
+  dst.food = 5000;
+  const srcGold = src.gold;
+  const b = createBattle(state, {
+    pid, from: 'chenliu', walls: 40,
+    att: { force: 'cao-cao', officers: [{ officer: 'xiahou-yuan', troops: 5000, training: 70, unit: 'cav' }], commander: 'xiahou-yuan', food: 300 },
+    def: { force: fd, officers: [{ officer: officersIn(state, pid)[0].id, troops: 1000, training: 50, unit: 'inf' }], commander: officersIn(state, pid)[0].id, food: 500 },
+  });
+  const prisoner = b.units.find((u) => u.side === 'def');
+  prisoner.status = 'defeated';
+  prisoner.captured = true;
+  b.result = { winner: 'att', reason: 'test' };
+  const out = finishBattle(state, b, { pillage: true });
+  assert.equal(dst.owner, fd, 'the province stays with its lord');
+  assert.equal(dst.gold, 300);
+  assert.equal(src.gold, srcGold + 700);
+  assert.equal(state.officers['xiahou-yuan'].province, 'chenliu');
+  assert.equal(state.officers[prisoner.officer].province, 'chenliu');
+  assert.equal(state.officers[prisoner.officer].status, 'captive');
+  assert.deepEqual(out.pillaged, { gold: 700, grain: 3500 });
+});
+
+test('computer raiders pillage what they cannot hold, and keep what they can', async () => {
+  const { choosePillage } = await import('../src/engine/war.js');
+  const state = createGame({ seed: 5 });
+  const s = setupGoal(state, 'liu-yan');
+  assert.equal(choosePillage(state, 'liu-yan', s.target, 'raid', 1), false, 'its war goal is always kept');
+  state.forces['liu-yan'].goal = null;
+  const t = s.target;
+  assert.equal(choosePillage(state, 'liu-yan', t, 'conquer', 1), false, 'an invasion keeps what it takes');
+  assert.equal(choosePillage(state, 'liu-yan', t, 'raid', 1), true, 'a weak raiding party strips and leaves');
+  assert.equal(choosePillage(state, 'liu-yan', t, 'raid', 1e9), false, 'a raid strong enough to hold it stays');
+});
+
+test('a lord who led an army abroad heads back to his seat', () => {
+  const state = createGame({ seed: 5 });
+  const fid = 'liu-yan';
+  const lord = state.officers[state.forces[fid].ruler];
+  const seat = lord.province;
+  const away = ADJACENT[seat].find((n) => state.provinces[n].owner === fid);
+  assert.ok(away, 'Liu Yan holds a province beside his seat');
+  lord.province = away;
+  const action = planProvinceTurn(state, away, 'balanced', { isAI: true, skip: new Set(['trade', 'relief']) });
+  assert.equal(action.type, 'move');
+  assert.equal(action.args.to, seat);
+  assert.deepEqual(action.args.officers, [lord.id]);
+});

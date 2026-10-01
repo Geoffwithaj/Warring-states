@@ -4,14 +4,14 @@
 import { chance, pick } from './rng.js';
 import {
   officersIn, idleOfficersIn, usedThisMonth, freeOfficersIn, captivesIn, provinceStrength, strengthOf, governorOf, areAllied,
-  capitalOf, troopCap, monthIndex,
+  capitalOf, troopCap, monthIndex, isIdle,
 } from './state.js';
 import { ADJACENT, distanceMap, PROVINCE_BY_ID } from './map.js';
 import { DEV_FIELDS, fieldMax, tilesOf, foodUpkeep, harvestFood, maxDraft, TASKS } from './economy.js';
 import { foodNeeded, MAX_ARMY } from './war.js';
 import { captiveRecruitChance, allianceChance } from './commands.js';
 import {
-  traitOf, traitScale, opinionOf, isHomeland, wouldAttack, isOffLimits, strikeRatio, usableStrength, realmDistance,
+  traitOf, traitScale, opinionOf, isHomeland, wouldAttack, isOffLimits, seatOf, strikeRatio, usableStrength, realmDistance,
 } from './politics/index.js';
 
 export const DIRECTIVES = {
@@ -260,6 +260,20 @@ function planMuster(state, pid, fid) {
   return { type: 'move', args: { to, officers: movers, gold, food } };
 }
 
+// A lord who has led an army abroad heads back to his seat. (The others stay,
+// and the realm's usual balancing moves them as threats require.)
+function planHomecoming(state, pid, fid) {
+  const ruler = state.forces[fid].ruler;
+  const lord = state.officers[ruler];
+  if (lord?.province !== pid || !isIdle(state, lord)) return null;
+  const seat = seatOf(state, fid);
+  if (!seat || seat === pid) return null;
+  const dist = realmDistance(state, fid, seat);
+  const to = ADJACENT[pid].find((n) => dist[n] !== undefined && dist[n] === dist[pid] - 1);
+  if (!to) return null;
+  return { type: 'move', args: { to, officers: [ruler] } };
+}
+
 // From the staging province, strike at the goal once the army is strong enough.
 function planStrike(state, pid, fid) {
   const g = state.forces[fid].goal;
@@ -359,6 +373,7 @@ export function planProvinceTurn(state, pid, directive, { isAI, skip = new Set()
   }
   const staging = isAI && state.forces[fid].goal?.staging === pid;
   const plans = [
+    () => (isAI ? planHomecoming(state, pid, fid) : null),
     () => (isAI ? planStrike(state, pid, fid) : null),
     // The army gathering for the goal is not spent on lesser prizes.
     () => (staging ? null : planAttack(state, pid, fid, directive)),

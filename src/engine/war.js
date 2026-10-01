@@ -9,7 +9,7 @@ import { ADJACENT, isAdjacent } from './map.js';
 import { createBattle, autoResolve } from './battle.js';
 import { tilesOf, TILE_VALUE } from './economy.js';
 import { handleRulerLoss, eliminateForce } from './succession.js';
-import { onAttack, onConquest, remember, isHomeland, traitOf, onGoalBattle } from './politics/index.js';
+import { onAttack, onConquest, remember, isHomeland, traitOf, onGoalBattle, wantsToHold } from './politics/index.js';
 
 export const MAX_ARMY = 10;
 
@@ -64,7 +64,10 @@ export function declareWar(state, { from, to, officerIds, commanderId, food, int
   if (!fd || !defenders.length) {
     const who = forceName(state, fa);
     if (!fd) log(state, `${who}'s forces occupy the unclaimed province of ${dst.name}.`, 'info', [fa]);
-    else log(state, `${dst.name} falls to ${who} without a fight!`, 'major', [fa, fd]);
+    else if (choosePillage(state, fa, to, intent, attackers.reduce((s, o) => s + strengthOf(o), 0))) {
+      log(state, `${who}'s raiders find ${dst.name} undefended.`, 'war', [fa, fd]);
+      return { kind: 'captured', outcome: pillage(state, { fa, fd, to, from, movers: attackers, captives: [], food }) };
+    } else log(state, `${dst.name} falls to ${who} without a fight!`, 'major', [fa, fd]);
     const outcome = conquer(state, { fa, fd, to, movers: attackers, food, captives: [] });
     return { kind: 'captured', outcome };
   }
@@ -170,7 +173,43 @@ function applyDevastation(state, b, dst) {
   log(state, `${parts.join(' and ')} of ${dst.name} lie in ruins.`, 'disaster', [b.forces.att, b.forces.def].filter(Boolean));
 }
 
-export function finishBattle(state, b) {
+// Pillage instead of holding: the victors strip the treasury and granary,
+// carry off their captives and march home, leaving the province to its lord.
+export const PILLAGE_SHARE = 0.7;
+
+function pillage(state, { fa, fd, to, from, movers, captives, food }) {
+  const dst = state.provinces[to];
+  const src = state.provinces[from];
+  const gold = Math.floor(dst.gold * PILLAGE_SHARE);
+  const grain = Math.floor(dst.food * PILLAGE_SHARE);
+  dst.gold -= gold;
+  dst.food -= grain;
+  dst.order = clamp(dst.order - 15, 0, 100);
+  dst.pop = Math.round(dst.pop * 0.97);
+  for (const o of movers) o.province = from;
+  if (src.owner === fa) {
+    src.gold += gold;
+    src.food += grain + Math.max(0, food);
+  }
+  if (fd) remember(state, fd, fa, 'raided', -20);
+  log(state, `${forceName(state, fa)} pillages ${dst.name} and withdraws, carrying off ${gold} gold and ${grain} grain.`, 'war', [fa, fd].filter(Boolean));
+  for (const o of captives) o.province = from;
+  const outcome = imprison(state, fa, from, captives);
+  return { ...outcome, pillaged: { gold, grain } };
+}
+
+// Would the victor rather hold the province or strip it and go home? Players
+// choose for themselves; computer raiders pillage unless the land is worth
+// keeping and they can hold it.
+export function choosePillage(state, fa, pid, intent, armyStrength) {
+  if (state.forces[fa]?.human) return false;
+  return intent === 'raid' && !wantsToHold(state, fa, pid, armyStrength);
+}
+
+// After a won battle, whether the attacker may choose to pillage instead.
+export const canPillage = (b) => b.result?.winner === 'att' && !!b.forces.def;
+
+export function finishBattle(state, b, { pillage: pillageChoice } = {}) {
   const { winner, reason } = b.result;
   const fa = b.forces.att;
   const fd = b.forces.def;
@@ -218,6 +257,15 @@ export function finishBattle(state, b) {
     for (const o of survivors('att')) if (!movers.includes(o)) o.province = b.from;
     // Attackers taken on the field are freed when their side takes the castle.
     movers.push(...captives.filter((c) => c.force === fa));
+    const strength = movers.reduce((s, o) => s + strengthOf(o), 0);
+    const strip = pillageChoice ?? choosePillage(state, fa, b.pid, b.intent, strength);
+    if (strip && fd) {
+      for (const u of b.units.filter((x) => x.side === 'def' && x.status === 'retreated')) {
+        const refuge = friendlyRefuge(state, fd, b.pid);
+        if (refuge) state.officers[u.officer].province = refuge;
+      }
+      return { winner, ...pillage(state, { fa, fd, to: b.pid, from: b.from, movers, captives: captives.filter((c) => c.force === fd), food: b.attFood }) };
+    }
     const outcome = conquer(state, {
       fa, fd, to: b.pid, movers, food: b.attFood, captives: captives.filter((c) => c.force === fd),
     });

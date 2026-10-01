@@ -534,9 +534,11 @@ export const RAZE_YIELD = { farm: { food: 150 }, market: { gold: 40 } };
 
 export const siteAt = (b, c, r) => b.sites?.[idx(c, r)] ?? null;
 
-// A unit that started its turn on a developed field or market may raze it.
+// A unit that started its turn on a developed field or market may raze it,
+// unless an enemy stands beside it: nobody burns the countryside mid-fight.
 export function canRaze(b, u) {
   if (u.side !== 'att' || u.done || u.moved || isShaken(b, u)) return false;
+  if (meleeTargets(b, u).length) return false;
   const site = siteAt(b, u.c, u.r);
   return !!site && !site.razed;
 }

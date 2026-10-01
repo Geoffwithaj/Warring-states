@@ -4,7 +4,7 @@
 // target, and the blow falls once the army is strong enough.
 
 import { ADJACENT } from '../map.js';
-import { provinceStrength, strengthOf, officersOf, monthIndex, forceName, log, areAllied } from '../state.js';
+import { provinceStrength, strengthOf, officersOf, officersIn, monthIndex, forceName, log, areAllied } from '../state.js';
 import { traitOf, traitScale } from './traits.js';
 import { opinionOf, inTruce } from './opinion.js';
 import { lostHomeland, isHomeland } from './homeland.js';
@@ -169,4 +169,26 @@ export function onGoalBattle(state, fid, pid, won) {
   if (won) return dropGoal(state, fid, false);
   g.fails += 1;
   if (g.fails >= 2) dropGoal(state, fid, true);
+}
+
+// Is a province just won worth holding? Its lord's war goal or lost homeland
+// always is; otherwise only if the victors could stand against the strongest
+// hostile neighbour.
+export function wantsToHold(state, fid, pid, armyStrength) {
+  if (state.forces[fid]?.goal?.target === pid || isHomeland(state, pid, fid)) return true;
+  const threat = Math.max(0, ...ADJACENT[pid].map((n) => {
+    const owner = state.provinces[n].owner;
+    if (!owner || owner === fid || areAllied(state, fid, owner)) return 0;
+    return officersIn(state, n).reduce((s, o) => s + strengthOf(o), 0);
+  }));
+  return armyStrength >= threat * 1.2;
+}
+
+// Where a house's lord keeps court. It is the starting capital until that is
+// lost; then wherever the lord happens to be.
+export function seatOf(state, fid) {
+  const f = state.forces[fid];
+  const ruler = state.officers[f.ruler];
+  if (!f.seat || state.provinces[f.seat]?.owner !== fid) f.seat = ruler?.status === 'serving' ? ruler.province : null;
+  return f.seat;
 }

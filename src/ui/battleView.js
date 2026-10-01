@@ -12,6 +12,7 @@ import {
   canDeployAt, deployUnit, finishDeployment, autoDeploy,
 } from '../engine/battle.js';
 import { forceName } from '../engine/state.js';
+import { canPillage, PILLAGE_SHARE } from '../engine/war.js';
 
 const R = 30;
 const SQ3 = Math.sqrt(3);
@@ -523,14 +524,28 @@ export function openBattleView(state, { onFinish }) {
       h('p', {}, `${forceName(state, b.forces[b.result.winner])} wins. ${b.result.reason}`),
       h('p', { class: 'hint' }, `The walls of ${state.provinces[b.pid].name} stand at ${Math.round(b.walls)} of ${b.wallsMax}.`,
         b.razed.farm + b.razed.market ? ` Razed: ${razedText()}.` : ''),
-      h('button', { class: 'primary', onclick: close }, 'Continue')));
+      ...resultActions()));
   }
 
-  function close() {
+  // A player who has won the province chooses to hold it or strip it.
+  function resultActions() {
+    const p = state.provinces[b.pid];
+    if (!(canPillage(b) && state.forces[b.forces.att]?.human)) return [h('button', { class: 'primary', onclick: () => close() }, 'Continue')];
+    const gold = Math.floor(p.gold * PILLAGE_SHARE);
+    const grain = Math.floor(p.food * PILLAGE_SHARE);
+    return [
+      h('p', {}, `${p.name} is yours. Hold it, or pillage it and march home with ${gold} gold, ${grain} grain and any prisoners, leaving the province to ${forceName(state, b.forces.def)}.`),
+      h('div', { class: 'row' },
+        h('button', { class: 'primary', onclick: () => close({ pillage: false }) }, `Hold ${p.name}`),
+        h('button', { onclick: () => close({ pillage: true }) }, 'Pillage and withdraw')),
+    ];
+  }
+
+  function close(choice) {
     ui.closed = true;
     root.hidden = true;
     root.replaceChildren();
-    onFinish();
+    onFinish(choice);
   }
 
   render();

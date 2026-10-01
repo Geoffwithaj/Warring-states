@@ -181,10 +181,10 @@ export function governorTakesTurn(state, directive = 'balanced') {
   return { ok: true, msg: msgs.length ? msgs.join(' ') : 'The governor finds nothing to do this month.', msgs };
 }
 
-export function concludeBattle(state) {
+export function concludeBattle(state, choice = {}) {
   const b = state.battle;
   if (!b?.result) return null;
-  const outcome = finishBattle(state, b);
+  const outcome = finishBattle(state, b, choice);
   state.battle = null;
   return outcome;
 }

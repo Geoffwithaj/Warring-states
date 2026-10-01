@@ -14,7 +14,7 @@ export {
 } from './opinion.js';
 export { isHomeland, lostHomeland, grievance, onConquest, onFall } from './homeland.js';
 export {
-  covetedProvince, wouldAttack, isOffLimits, strikeRatio, usableStrength, realmDistance, onGoalBattle, chooseGoal,
+  covetedProvince, wouldAttack, isOffLimits, wantsToHold, seatOf, strikeRatio, usableStrength, realmDistance, onGoalBattle, chooseGoal,
 } from './strategy.js';
 export { spyChance, gatherIntelligence, factsFor, plainChance, SPY_COST } from './intel.js';
 
@@ -22,6 +22,7 @@ export function initPolitics(state, scenario) {
   initTraits(state);
   initOpinion(state, scenario.bonds);
   initHomelands(state);
+  for (const f of Object.values(state.forces)) f.seat = state.officers[f.ruler]?.province ?? null;
   state.intel = {};
   updateGoals(state);
 }

@@ -347,6 +347,10 @@ function raid(state, { farmTiles = 6, marketTiles = 3, raiders = 2, humanSides }
   });
 }
 
+// A site with no unit on it and no defender beside it.
+const quietSite = (b, kind) => sitesOf(b, kind).find((h) => !b.units.some((x) => x.status === 'active'
+  && (hexDist(x, h) === 0 || (x.side === 'def' && hexDist(x, h) === 1))));
+
 const sitesOf = (b, kind) => {
   const out = [];
   for (let r = 0; r < BATTLE_H; r++) for (let c = 0; c < BATTLE_W; c++) if (siteAt(b, c, r)?.kind === kind) out.push({ c, r });
@@ -366,7 +370,7 @@ test('only a unit that started its turn on a developed tile can raze it, and raz
   const state = createGame({ seed: 7 });
   const b = raid(state);
   const u = b.units.find((x) => x.side === 'att');
-  const farm = sitesOf(b, 'farm').find((h) => !b.units.some((x) => x.c === h.c && x.r === h.r));
+  const farm = quietSite(b, 'farm');
   Object.assign(u, { c: farm.c, r: farm.r, moved: true, done: false });
   assert.equal(canRaze(b, u), false, 'moved this turn');
   u.moved = false;
@@ -378,7 +382,9 @@ test('only a unit that started its turn on a developed tile can raze it, and raz
   assert.equal(canRaze(b, { ...u, done: false }), false, 'already razed');
 
   const v = b.units.filter((x) => x.side === 'att')[1];
-  const market = sitesOf(b, 'market').find((h) => !b.units.some((x) => x.c === h.c && x.r === h.r));
+  // Markets ring the castle; clear the defenders away so the raider is free.
+  for (const x of b.units) if (x.side === 'def') x.c = 100;
+  const market = quietSite(b, 'market');
   Object.assign(v, { c: market.c, r: market.r, moved: false, done: false });
   assert.ok(doRaze(state, b, v));
   assert.equal(v.loot, RAZE_YIELD.market.gold);
@@ -508,4 +514,17 @@ test('War decides duels steeply: a wide gap rarely loses', async () => {
   state.officers[d.officer] = { ...state.officers[d.officer], war: 85 };
   const close = duelWinChance(state, a, d);
   assert.ok(close > 0.55 && close < 0.85, `close match stays risky (${close})`);
+});
+
+test('a unit engaged by an enemy cannot raze the tile it stands on', () => {
+  const state = createGame({ seed: 7 });
+  const b = raid(state);
+  const u = b.units.find((x) => x.side === 'att');
+  const farm = quietSite(b, 'farm');
+  Object.assign(u, { c: farm.c, r: farm.r, moved: false, done: false });
+  assert.ok(canRaze(b, u));
+  const d = b.units.find((x) => x.side === 'def' && !x.commander);
+  const next = neighbors(farm.c, farm.r).find((n) => !b.units.some((x) => x.c === n.c && x.r === n.r) && b.terrain[idx(n.c, n.r)] !== 'river');
+  Object.assign(d, { c: next.c, r: next.r });
+  assert.equal(canRaze(b, u), false);
 });
