@@ -114,7 +114,7 @@ export function openMilitary(ctx, initial) {
         draft.troops = Math.min(draft.troops || Math.min(max, 1000), max);
         const preview = h('div', { class: 'full preview' });
         const upd = () => {
-          preview.textContent = `${fmt(draft.troops)} recruits for ${draftCost(draft.troops, pid, o.unit)} gold${o.unit !== 'inf' ? ' (including their equipment)' : ''}. ${o.name}: ${fmt(o.troops)} → ${fmt(o.troops + draft.troops)} (max ${fmt(troopCap(o))}). Order −${Math.ceil(draft.troops / 1000) * 2}. New recruits lower training.`;
+          preview.textContent = `${fmt(draft.troops)} recruits for ${draftCost(draft.troops)} gold. ${o.name}: ${fmt(o.troops)} → ${fmt(o.troops + draft.troops)} (max ${fmt(troopCap(o))}). Order −${Math.ceil(draft.troops / 1000) * 2}. New recruits lower training.`;
         };
         upd();
         return h('div', { class: 'form' },
@@ -178,7 +178,7 @@ function organizePane(ctx, rerender) {
     h('table', { class: 'officers' },
       h('thead', {}, h('tr', {}, ['Officer', 'Troops', 'Max', 'Trn', 'Unit type'].map((x) => h('th', {}, x)))),
       h('tbody', {}, rows)),
-    h('p', { class: 'hint' }, 'Cavalry: fast, strong on open plains, deadly against archers, weak in forest and marsh. Archers: strike from range 2 (3 from high ground) without reprisal, weak in melee. Infantry: steady, strong against cavalry. Changing a unit\u2019s arm costs 200 gold plus equipment for every soldier (horses 1 gold per 10 men, 1 per 25 in horse country; bows 1 per 40) and a little training. Soldiers transferred or drafted into a cavalry or archer unit are equipped at the same rate.'),
+    h('p', { class: 'hint' }, 'Cavalry: fast, strong on open plains, deadly against archers, weak in forest and marsh. Archers: strike from range 2 (3 from high ground) without reprisal, weak in melee. Infantry: steady, strong against cavalry. Taking up a new arm costs a general 200 gold, however many men he leads, and a little training; he keeps the gear, so switching back to an arm he has used before is free.'),
     h('h3', { style: { marginTop: '10px', fontSize: '15px' } }, 'Transfer troops'),
     h('div', { class: 'row' },
       select(officerOpts(officers), t.from, (v) => (t.from = v)), '→',

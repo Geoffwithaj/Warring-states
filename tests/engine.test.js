@@ -9,7 +9,7 @@ import {
   inArrivalStrip, BATTLE_W, BATTLE_H, RAZE_YIELD,
 } from '../src/engine/battle.js';
 import { finishBattle } from '../src/engine/war.js';
-import { checkVictory as checkVictoryFor } from '../src/engine/battle.js';
+import { checkVictory as checkVictoryFor, meleeTargets as meleeTargetsOf } from '../src/engine/battle.js';
 import { devGain } from '../src/engine/economy.js';
 
 test('every province has at least one neighbour and adjacency is symmetric', () => {
@@ -529,7 +529,7 @@ test('a unit engaged by an enemy cannot raze the tile it stands on', () => {
   assert.equal(canRaze(b, u), false);
 });
 
-test('changing arm cannot be dodged by emptying a unit: transfers and drafts pay for equipment', async () => {
+test('a general buys a new arm once, for a flat fee whatever the size of his unit', async () => {
   const { changeUnitType, transferTroops, unitChangeCost } = await import('../src/engine/commands.js');
   const state = createGame({ humanRulers: ['cao-cao'], seed: 42 });
   newGameStart(state);
@@ -537,24 +537,23 @@ test('changing arm cannot be dodged by emptying a unit: transfers and drafts pay
   const p = state.provinces.chenliu;
   p.gold = 10000;
   const [a, b] = officersIn(state, 'chenliu').filter((o) => o.troops > 0);
-  a.unit = 'inf';
-  b.unit = 'inf';
-  const troops = b.troops;
-  // Empty b, convert it, and move the troops back: each step costs.
-  assert.ok(transferTroops(state, 'chenliu', b.id, a.id, troops).ok);
-  const moved = troops - b.troops;
-  assert.equal(unitChangeCost(state, 'chenliu', b, 'cav'), 200, 'even an empty unit pays the flat fee');
+  a.unit = 'inf'; a.arms = ['inf'];
+  b.unit = 'inf'; b.arms = ['inf'];
+  // Emptying the unit first saves nothing: the fee is the same.
+  const full = unitChangeCost(state, 'chenliu', b, 'cav');
+  assert.ok(transferTroops(state, 'chenliu', b.id, a.id, b.troops).ok);
+  assert.equal(unitChangeCost(state, 'chenliu', b, 'cav'), full);
+  assert.equal(full, 200);
   let gold = p.gold;
   assert.ok(changeUnitType(state, 'chenliu', b.id, 'cav').ok);
   assert.equal(p.gold, gold - 200);
+  // Back to infantry and then to cavalry again: he already has both.
   gold = p.gold;
-  assert.ok(transferTroops(state, 'chenliu', a.id, b.id, moved).ok);
-  assert.equal(p.gold, gold - Math.ceil(moved / 10), 'infantry joining a cavalry unit need horses');
-  // Drafting straight into cavalry costs more than into infantry.
-  gold = p.gold;
-  b.troops = 0;
-  assert.ok(playerCommand(state, 'draft', { officer: b.id, troops: 1000 }).ok);
-  assert.equal(gold - p.gold, 100 + 100);
+  assert.ok(changeUnitType(state, 'chenliu', b.id, 'inf').ok);
+  assert.ok(changeUnitType(state, 'chenliu', b.id, 'cav').ok);
+  assert.equal(p.gold, gold);
+  // Archers are new to him.
+  assert.equal(unitChangeCost(state, 'chenliu', b, 'arc'), 200);
 });
 
 test('a strong army takes a well-walled castle at a bearable price', () => {
@@ -572,4 +571,41 @@ test('a strong army takes a well-walled castle at a bearable price', () => {
   }
   assert.ok(wins >= 11, `3:1 against walls of 90 should almost always win (${wins}/12)`);
   assert.ok(lost / 12 < 0.4, `and cost well under half the army (${Math.round(lost / 12 * 100)}%)`);
+});
+
+test('three units spaced around the castle surround it, and the cut-off garrison loses heart', async () => {
+  const { isEncircled, castleRing, endPhase } = await import('../src/engine/battle.js');
+  const state = createGame({ seed: 7 });
+  const b = createBattle(state, {
+    pid: 'xuchang', from: 'chenliu', walls: 60,
+    att: { force: 'cao-cao', officers: ['xiahou-yuan', 'xiahou-dun', 'cao-ren'].map((officer) => ({ officer, troops: 4000, training: 70, unit: 'inf' })), commander: 'xiahou-yuan', food: 500 },
+    def: { force: 'yuan-shu', officers: [{ officer: 'ji-ling', troops: 5000, training: 70, unit: 'inf' }], commander: 'ji-ling', food: 500 },
+  });
+  const ring = castleRing(b);
+  const atts = b.units.filter((u) => u.side === 'att');
+  atts.forEach((u, i) => { u.c = ring[i].c; u.r = ring[i].r; });
+  assert.equal(isEncircled(b), false, 'three side by side leave a gap');
+  atts.forEach((u, i) => { u.c = ring[i * 2].c; u.r = ring[i * 2].r; });
+  assert.equal(isEncircled(b), true, 'three spaced around close the ring');
+  const occ = b.units.find((u) => u.side === 'def');
+  const before = occ.morale;
+  b.side = 'att';
+  endPhase(state, b);
+  assert.ok(occ.morale < before);
+});
+
+test('the garrison may strike out of the castle only every other day', async () => {
+  const { doAttack } = await import('../src/engine/battle.js');
+  const state = createGame({ seed: 7 });
+  const b = siege(state, { walls: 60 });
+  const [a, d] = b.units;
+  d.c = b.castle.c; d.r = b.castle.r;
+  besideCastle(b, a);
+  b.side = 'def';
+  assert.ok(meleeTargetsOf(b, d).includes(a));
+  assert.ok(doAttack(state, b, d, a));
+  b.day += 1; d.done = false;
+  assert.equal(meleeTargetsOf(b, d).length, 0, 'resting the next day');
+  b.day += 1;
+  assert.ok(meleeTargetsOf(b, d).includes(a), 'free to strike again after that');
 });

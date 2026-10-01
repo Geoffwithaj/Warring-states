@@ -9,7 +9,7 @@ import {
   terrainAt, chargeTargets, chargeLanding, previewCharge, doCharge, canAssault, doAssault, previewAssault,
   isBreached, breachLevel, isCastle, castleOccupant, duelTargets, duelWinChance, answerPendingDuel,
   unitHasOptions, garrisonVolley, GARRISON_RANGE, hexDist, siteAt, canRaze, doRaze, RAZE_YIELD,
-  canDeployAt, deployUnit, finishDeployment, autoDeploy,
+  canDeployAt, deployUnit, finishDeployment, autoDeploy, isEncircled, isResting,
 } from '../engine/battle.js';
 import { forceName } from '../engine/state.js';
 import { canPillage, PILLAGE_SHARE } from '../engine/war.js';
@@ -356,7 +356,8 @@ export function openBattleView(state, { onFinish }) {
     const occ = castleOccupant(b);
     return `Castle · walls ${Math.round(b.walls)}/${b.wallsMax}`
       + (isBreached(b) ? ' · BREACHED' : ` · breached at ${breachLevel(b)}`)
-      + (occ ? ` · held by ${oName(occ)}` : ' · empty');
+      + (occ ? ` · held by ${oName(occ)}` : ' · empty')
+      + (occ?.side === 'def' && isEncircled(b) ? ' · SURROUNDED' : '');
   }
 
   function terrainLine(c, r) {
@@ -493,7 +494,9 @@ export function openBattleView(state, { onFinish }) {
         duel: `${tap[0].toUpperCase() + tap.slice(1)} an adjacent enemy officer to challenge them.`,
         charge: `${tap[0].toUpperCase() + tap.slice(1)} an enemy to charge through it. The charge is only as good as the worst ground it crosses.`,
         assault: `${tap[0].toUpperCase() + tap.slice(1)} the castle to assault its walls. They are breached at half strength; only then can an empty castle be entered.`,
-      }[ui.mode] || (razeOk
+      }[ui.mode] || (isResting(b, u)
+        ? 'Having struck out yesterday, the garrison rests behind the walls today. It can still Wait or Withdraw.'
+        : razeOk
         ? `Standing on developed land: Raze it to seize its yield, or move on.${u.loot ? ` Carrying ${u.loot} gold.` : ''}`
         : u.moved
         ? 'This unit has moved; it can still attack, shoot, set a fire or assault the walls, or Wait.'

@@ -4,8 +4,8 @@ Known issues and agreed next steps, in rough priority order. Done items move to 
 
 ## Known exploits
 
-None open. (Free cavalry conversion was closed: changing arm costs 200 gold plus equipment, and
-soldiers transferred or drafted into a cavalry or archer unit are equipped at the same rate.)
+None open. (Free cavalry conversion was closed: a general pays a flat 200 gold the first time he
+takes up an arm, whatever the size of his unit, and keeps the gear.)
 
 ## Planned
 
@@ -19,7 +19,15 @@ soldiers transferred or drafted into a cavalry or archer unit are equipped at th
 - **Cache-proof updates**: show a version label on the title screen, and make new versions load fresh
   instead of mixing with cached files.
 
+## Ideas
+
+- **Wear a castle down before battle**: plots to sabotage walls or stir desertion in the garrison;
+  raided fields leaving a besieged castle short of grain.
+
 ## To watch in playtesting
+
+- **Sieges** were eased (garrison-scaled volley, rubble after a breach, every-other-day sallies,
+  encirclement). Computer lords now take castles more readily too; check your own walls still hold.
 
 - **Archers** deal steady, risk-free but low damage (a volley about 45% of an infantry attack). Being
   able to pin raiders (no razing beside an enemy) may be enough of a role; if not, try about +20%.

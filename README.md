@@ -104,7 +104,10 @@ npm test             # engine tests, including a 15-year all-AI simulation (Node
   attacker beside them (stronger walls, heavier volleys), while the unit inside acts normally.
   The volley needs men on the walls: a full garrison (5,000 or more) shoots at full strength, a token
   one at a quarter. Strong walls also shelter the garrison from arrows and blows; once breached they
-  are rubble and shelter it half as well. Infantry (and, weakly, archers) can
+  are rubble and shelter it half as well. The unit holding the castle may strike out only every
+  other day. **Encirclement**: when every open hex beside the castle is held by an attacker or covered
+  by one next to it (three units spaced around the walls will do), the cut-off garrison loses heart
+  each day, its volley weakens, and in the end it breaks. Infantry (and, weakly, archers) can
   assault the walls; the castle can only be entered once the walls are breached (down to half) and it
   is empty. An occupied castle holds even with ruined walls. Wall damage stays with the province.
 - **Duels**: War decides them steeply — close matches are risky, a wide gap rarely loses. Refusing a

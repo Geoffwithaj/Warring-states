@@ -472,9 +472,15 @@ export function shootRange(b, u) {
 
 const isShaken = (b, u) => u.shakenDay === b.day;
 
+const adjacentEnemies = (b, u) => neighbors(u.c, u.r).map((n) => unitAt(b, n.c, n.r)).filter((e) => e && e.side !== u.side);
+
+// The garrison may strike out of the castle only every other day: the day
+// after a sally it rests behind the walls.
+export const isResting = (b, u) => u.side === 'def' && isCastle(b, u.c, u.r) && u.salliedDay === b.day - 1;
+
 export function meleeTargets(b, u) {
-  if (isShaken(b, u)) return [];
-  return neighbors(u.c, u.r).map((n) => unitAt(b, n.c, n.r)).filter((e) => e && e.side !== u.side);
+  if (isShaken(b, u) || isResting(b, u)) return [];
+  return adjacentEnemies(b, u);
 }
 
 export function shootTargets(b, u) {
@@ -724,6 +730,7 @@ export function doAttack(state, b, u, t) {
   const { dmg, counter } = previewMelee(state, b, u, t);
   u.done = true;
   exchange(state, b, u, t, dmg, counter, 'attacks');
+  if (isCastle(b, u.c, u.r)) u.salliedDay = b.day;
   return true;
 }
 
@@ -797,7 +804,8 @@ const DUEL_COOLDOWN = 3;
 const duelKey = (a, d) => `${Math.min(a.id, d.id)}-${Math.max(a.id, d.id)}`;
 
 export function duelTargets(b, u) {
-  return meleeTargets(b, u).filter((t) => (b.duels[duelKey(u, t)] ?? -99) + DUEL_COOLDOWN <= b.day);
+  if (isShaken(b, u)) return [];
+  return adjacentEnemies(b, u).filter((t) => (b.duels[duelKey(u, t)] ?? -99) + DUEL_COOLDOWN <= b.day);
 }
 
 // How often a computer-run officer takes up a challenge. Behind the walls
@@ -1012,14 +1020,42 @@ export function garrisonVolley(b, u) {
   if (b.walls <= 0) return 0;
   return Math.min(u.troops, Math.round(b.walls * WALL_VOLLEY * wallManning(b) * arrowCover(b, u) * (b.weather === 'rain' ? 0.5 : 1)));
 }
+// The castle is surrounded when every open hex around it is held by an
+// attacker or covered by one beside it, with no defender among them: three
+// units spaced around the walls can close the ring. Cut off, the garrison
+// loses heart each day, shoots less, and in the end breaks.
+export const ENCIRCLED_MORALE = 6;
+export const ENCIRCLED_VOLLEY = 0.85;
+export function castleRing(b) {
+  return neighbors(b.castle.c, b.castle.r).filter((n) => TERRAIN[terrainAt(b, n.c, n.r)].cost);
+}
+export function isEncircled(b) {
+  const ring = castleRing(b);
+  const held = ring.filter((n) => unitAt(b, n.c, n.r)?.side === 'att');
+  if (!held.length || ring.some((n) => unitAt(b, n.c, n.r)?.side === 'def')) return false;
+  return ring.every((n) => held.some((h) => hexDist(h, n) <= 1));
+}
+
+function encirclement(state, b) {
+  const occ = castleOccupant(b);
+  if (!occ || occ.side !== 'def' || !isEncircled(b)) return;
+  occ.morale = clamp(occ.morale - ENCIRCLED_MORALE, 0, 100);
+  addLog(b, `The castle is surrounded. Cut off, ${officer(state, occ).name}'s garrison loses heart (morale ${occ.morale}).`);
+  if (occ.morale <= 0) {
+    defeatUnit(state, b, occ, 'routed');
+    checkVictory(state, b);
+  }
+}
+
 function wallGarrison(state, b) {
-  if (b.walls <= 0) return;
+  encirclement(state, b);
+  if (b.result || b.walls <= 0) return;
   const hit = activeUnits(b, 'att').filter((u) => hexDist(u, b.castle) <= GARRISON_RANGE);
   if (!hit.length) return;
   const losses = [];
   for (const u of hit) {
     u.morale = clamp(u.morale - Math.round(b.walls / 40), 0, 100);
-    losses.push([u, garrisonVolley(b, u)]);
+    losses.push([u, Math.round(garrisonVolley(b, u) * (isEncircled(b) ? ENCIRCLED_VOLLEY : 1))]);
   }
   addLog(b, `Archers on the walls rain arrows on the besiegers: ${losses.map(([u, l]) => `${officer(state, u).name} −${l}`).join(', ')}.`);
   for (const [u, loss] of losses) if (u.status === 'active') applyLoss(state, b, u, loss);
@@ -1216,6 +1252,16 @@ function positionScore(state, b, u, node, goal, field) {
   }
   if (u.side === 'att' && !isBreached(b) && u.type !== 'cav' && hexDist(node, b.castle) === 1) s -= 15;
   if (u.side === 'att' && !isBreached(b) && hexDist(node, b.castle) <= GARRISON_RANGE) s += u.type === 'cav' ? 20 : 0;
+  // With units enough to close the ring, every open hex around the castle is
+  // worth holding: a surrounded garrison loses heart.
+  if (u.side === 'att' && castleOccupant(b)?.side === 'def' && hexDist(node, b.castle) === 1) {
+    const ring = castleRing(b);
+    if (activeUnits(b, 'att').length >= 3 && ring.some((n) => n.c === node.c && n.r === node.r)) {
+      // Prefer ring hexes not already covered by a friend, so the ring closes.
+      const friends = activeUnits(b, 'att').filter((x) => x !== u && ring.some((n) => n.c === x.c && n.r === x.r));
+      s -= friends.some((x) => hexDist(x, node) <= 1) ? 4 : u.type === 'cav' ? 30 : 12;
+    }
+  }
   if (u.side === 'def' && hexDist(node, b.castle) > 4) s += 30;
   // Attackers are drawn to developed land they can burn; defenders to land they must protect.
   const site = siteAt(b, node.c, node.r);

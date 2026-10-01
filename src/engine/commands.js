@@ -9,7 +9,7 @@ import {
 } from './state.js';
 import { isAdjacent, PROVINCE_BY_ID } from './map.js';
 import {
-  DEV_FIELDS, TAX, TASKS, fieldMax, devGain, reliefGain, trainGain, draftCost, maxDraft, skill, equipCost,
+  DEV_FIELDS, TAX, TASKS, fieldMax, devGain, reliefGain, trainGain, draftCost, maxDraft, skill,
 } from './economy.js';
 import { declareWar, validateWar, recruitChance, recruitCaptive, imprison } from './war.js';
 import {
@@ -70,7 +70,7 @@ export const COMMANDS = {
     troops = Math.floor(troops / 100) * 100;
     if (!o || troops <= 0) return fail('Invalid draft.');
     if (troops > maxDraft(state, pid, o)) return fail('Cannot draft that many.');
-    const cost = draftCost(troops, pid, o.unit);
+    const cost = draftCost(troops);
     if (cost > p.gold) return fail('Not enough gold.');
     p.gold -= cost;
     p.pop -= troops;
@@ -336,26 +336,20 @@ export function transferTroops(state, pid, fromId, toId, amount) {
   const room = troopCap(b) - b.troops;
   amount = Math.min(amount, room);
   if (amount <= 0) return fail(`${b.name} cannot command more troops.`);
-  // Soldiers joining another arm must be equipped for it.
-  const cost = transferCost(pid, a, b, amount);
-  const p = state.provinces[pid];
-  if (cost > p.gold) return fail(`Equipping them for ${b.name}'s unit needs ${cost} gold.`);
-  p.gold -= cost;
   b.training = Math.round((b.troops * b.training + amount * a.training) / (b.troops + amount));
   a.troops -= amount;
   b.troops += amount;
-  return ok(`${amount} troops transferred from ${a.name} to ${b.name}${cost ? ` and equipped for ${cost} gold` : ''}.`);
+  return ok(`${amount} troops transferred from ${a.name} to ${b.name}.`);
 }
 
-// Re-forming a unit as another arm: a flat fee for retraining and
-// reorganising, plus equipment for every soldier in it.
+// A general who takes up a new arm buys its gear once, for a flat fee however
+// many men he leads; he keeps it, so switching back later is free.
 export const UNIT_CHANGE_FEE = 200;
+export const armsOf = (o) => o.arms || ['inf', o.unit];
 export function unitChangeCost(state, pid, o, type) {
-  if (type === o.unit) return 0;
-  return UNIT_CHANGE_FEE + equipCost(pid, type, o.troops);
+  if (type === o.unit || armsOf(o).includes(type)) return 0;
+  return UNIT_CHANGE_FEE;
 }
-
-export const transferCost = (pid, from, to, amount) => (from.unit === to.unit ? 0 : equipCost(pid, to.unit, amount));
 
 export function changeUnitType(state, pid, oid, type) {
   const o = here(state, pid, oid);
@@ -365,6 +359,7 @@ export function changeUnitType(state, pid, oid, type) {
   if (cost > p.gold) return fail('Not enough gold.');
   p.gold -= cost;
   if (type !== o.unit) o.training = Math.max(0, o.training - 10);
+  o.arms = [...new Set([...armsOf(o), type])];
   o.unit = type;
   return ok(`${o.name}'s unit re-equipped${cost ? ` for ${cost} gold` : ''}.`);
 }
